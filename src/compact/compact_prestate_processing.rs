@@ -329,13 +329,24 @@ impl ParserState {
 
     fn parse(mut self) -> CompactParsingResult<WitnessOutput> {
         let mut entry_buf = Vec::new();
+        println!("Starting 2nd stage");
 
         // TODO: Consider moving this into the `Self`...
         let mut storage_tries = HashMap::new();
 
         loop {
+            println!("Loop!");
             let num_rules_applied =
                 self.apply_rules_to_witness_entries(&mut storage_tries, &mut entry_buf)?;
+
+            println!(
+                "Stack after applying rules: {:#?}",
+                self.entries
+                    .intern
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+            );
 
             if num_rules_applied == 0 {
                 break;
@@ -377,6 +388,21 @@ impl ParserState {
                 Self::try_apply_rules_to_curr_entry(&mut traverser, storage_tries, entry_buf)?;
             tot_rules_applied += num_rules_applied;
 
+            let mut c = traverser.entry_cursor.as_cursor();
+
+            while c.current().is_some() {
+                c.move_prev();
+            }
+
+            let mut buf = Vec::new();
+            c.move_next();
+            while let Some(e) = c.current() {
+                buf.push(e.to_string());
+                c.move_next();
+            }
+
+            println!("Stack after single pass: {:#?}", buf);
+
             if num_rules_applied == 0 {
                 // Unable to apply rule at current position, so advance the traverser.
                 traverser.advance();
@@ -397,6 +423,7 @@ impl ParserState {
         // calls to `invalid_witness_err`. We should condense this...
 
         // TODO: These clones are really bad, but we will clean this up once it works.
+        println!("buf[0] = {}", buf[0]);
         match buf[0].clone() {
             WitnessEntry::Instruction(Instruction::EmptyRoot) => {
                 Self::traverser_replace_prev_n_nodes_entry_helper(1, traverser, NodeEntry::Empty)
@@ -584,6 +611,8 @@ impl ParserState {
     ) -> CompactParsingResult<(usize, Option<AccountNodeCode>, Option<TrieRootHash>)> {
         traverser.get_prev_n_elems_into_buf(2, buf);
 
+        println!("buf[0..=1]: {}, {}", buf[0], buf[1]);
+
         match &buf[0..=1] {
             [WitnessEntry::Node(node), WitnessEntry::Node(NodeEntry::Code(c_bytes))] => {
                 Self::try_create_and_insert_partial_trie_from_node(
@@ -618,6 +647,9 @@ impl ParserState {
             Some(storage_root_node) => {
                 let s_trie_out = create_partial_trie_from_compact_node(storage_root_node)?;
                 let s_trie_hash = s_trie_out.trie.hash();
+
+                println!("Trie hash: {:x}", s_trie_hash);
+
                 storage_tries.insert(s_trie_hash, s_trie_out.trie);
 
                 Ok((n, account_node_code, Some(s_trie_hash)))
@@ -689,6 +721,15 @@ impl<C: CompactCursor> WitnessBytes<C> {
 
         loop {
             self.process_operator()?;
+
+            println!(
+                "Stack after processing operator: {:#?}",
+                self.instrs
+                    .intern
+                    .iter()
+                    .map(|i| i.to_string())
+                    .collect::<Vec<_>>()
+            );
 
             if self.byte_cursor.at_eof() {
                 break;
@@ -1216,15 +1257,30 @@ impl<'a> CollapsableWitnessEntryTraverser<'a> {
 
     // Inclusive.
     fn replace_prev_n_entries_with_single_entry(&mut self, n: usize, entry: WitnessEntry) {
-        for _ in 0..n {
+        println!(
+            "Cursor entry before replace start: {:?}",
+            self.entry_cursor.current()
+        );
+
+        println!("n: {}", n);
+        for i in 0..n {
+            println!("{}", i);
+
             self.entry_cursor.remove_current();
             self.entry_cursor.move_prev();
 
             if self.entry_cursor.index().is_none() {
+                println!("EARLY BREAK!");
                 break;
             }
         }
+
         self.entry_cursor.insert_after(entry);
+
+        println!(
+            "Curr after replace but before insert: {:?}",
+            self.entry_cursor.current()
+        );
 
         self.entry_cursor.move_next();
     }
