@@ -302,6 +302,9 @@ impl TxnInfo {
             .state_accounts_with_no_accesses_but_storage_tries
             .extend(accounts_with_storage_but_no_storage_accesses);
 
+        println!("META TXN BYTES: {}", hex::encode(&self.meta.byte_code));
+        println!("META RECEIPT BYTES: {}", hex::encode(&self.meta.byte_code));
+
         let txn_bytes = match self.meta.byte_code.is_empty() {
             false => Some(self.meta.byte_code),
             true => None,
