@@ -187,7 +187,8 @@ impl ProcessedBlockTrace {
         let receipts_trie =
             create_trie_subset_wrapped(&curr_block_tries.receipt, once(txn_k), TrieType::Receipt)?;
 
-        let x = nodes_used_by_txn
+        // TODO: Refactor so we can remove this vec alloc...
+        let storage_access_vec = nodes_used_by_txn
             .storage_accesses
             .iter()
             .map(|(k, v)| (H256::from_slice(&k.bytes_be()), v.clone()))
@@ -196,7 +197,7 @@ impl ProcessedBlockTrace {
         let storage_tries = create_minimal_storage_partial_tries(
             &mut curr_block_tries.storage,
             &nodes_used_by_txn.state_accounts_with_no_accesses_but_storage_tries,
-            x.iter(),
+            storage_access_vec.iter(),
         )?;
 
         Ok(TrieInputs {
