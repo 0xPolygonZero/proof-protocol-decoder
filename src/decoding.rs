@@ -125,9 +125,13 @@ impl ProcessedBlockTrace {
                     &txn_info.meta,
                     txn_idx,
                 )?;
-		
+
                 let trie_roots_after = calculate_trie_input_hashes(&curr_block_tries);
-                trace!("Protocol expected trie roots after txn {}: {:?}", txn_idx, trie_roots_after);
+                trace!(
+                    "Protocol expected trie roots after txn {}: {:?}",
+                    txn_idx,
+                    trie_roots_after
+                );
 
                 let gen_inputs = GenerationInputs {
                     txn_number_before: txn_idx.into(),
@@ -170,15 +174,6 @@ impl ProcessedBlockTrace {
         txn_idx: TxnIdx,
         _coin_base_addr: &Address,
     ) -> TraceParsingResult<TrieInputs> {
-        // let hashed_coinbase = hash(coin_base_addr.as_bytes());
-
-        // // TODO: Remove once the full node adds this to the trace...
-        // let node_accesses_plus_coinbase = nodes_used_by_txn
-        //     .state_accesses
-        //     .iter()
-        //     .cloned()
-        //     .chain(once(hashed_coinbase));
-
         let state_trie = create_minimal_state_partial_trie(
             &curr_block_tries.state,
             nodes_used_by_txn.state_accesses.iter().cloned(),
@@ -221,9 +216,9 @@ impl ProcessedBlockTrace {
             let storage_trie = trie_state
                 .storage
                 .get_mut(&H256::from_slice(&hashed_acc_addr.bytes_be()))
-                .ok_or(
-                    TraceParsingError::MissingAccountStorageTrie(H256::zero()), // TODO!!! FIX
-                )?;
+                .ok_or(TraceParsingError::MissingAccountStorageTrie(
+                    H256::from_slice(&hashed_acc_addr.bytes_be()),
+                ))?;
 
             for (slot, val) in storage_writes
                 .into_iter()
