@@ -4,7 +4,7 @@ use std::iter::once;
 
 use eth_trie_utils::nibbles::Nibbles;
 use eth_trie_utils::partial_trie::{HashedPartialTrie, PartialTrie};
-use ethereum_types::U256;
+use ethereum_types::{Address, U256};
 use plonky2_evm::generation::mpt::{AccountRlp, LegacyReceiptRlp};
 
 use crate::compact::compact_prestate_processing::{process_compact_prestate, PartialTriePreImages};
@@ -26,6 +26,7 @@ use crate::utils::{
 pub(crate) struct ProcessedBlockTrace {
     pub(crate) tries: PartialTriePreImages,
     pub(crate) txn_info: Vec<ProcessedTxnInfo>,
+    pub(crate) withdrawals: Vec<(Address, U256)>,
 }
 
 const COMPATIBLE_HEADER_VERSION: u8 = 1;
@@ -39,11 +40,16 @@ impl BlockTrace {
     where
         F: CodeHashResolveFunc,
     {
-        let proced_block_trace = self.into_processed_block_trace(p_meta);
+        let proced_block_trace =
+            self.into_processed_block_trace(p_meta, other_data.b_data.withdrawals.clone());
         proced_block_trace.into_txn_proof_gen_ir(other_data)
     }
 
-    fn into_processed_block_trace<F>(self, p_meta: &ProcessingMeta<F>) -> ProcessedBlockTrace
+    fn into_processed_block_trace<F>(
+        self,
+        p_meta: &ProcessingMeta<F>,
+        withdrawals: Vec<(Address, U256)>,
+    ) -> ProcessedBlockTrace
     where
         F: CodeHashResolveFunc,
     {
@@ -93,6 +99,7 @@ impl BlockTrace {
         ProcessedBlockTrace {
             tries: pre_image_data.tries,
             txn_info,
+            withdrawals,
         }
     }
 }
