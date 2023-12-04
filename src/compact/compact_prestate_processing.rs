@@ -1249,7 +1249,7 @@ pub(crate) fn process_compact_prestate(
     process_compact_prestate_common(state, ParserState::create_and_extract_header)
 }
 
-// TODO: Move behind a feature flag...
+#[cfg(debug_tools)]
 pub(crate) fn process_compact_prestate_debug(
     state: TrieCompact,
 ) -> CompactParsingResult<ProcessedCompactOutput> {
@@ -1316,7 +1316,7 @@ impl Display for InstructionAndBytesParsedFromBuf {
     }
 }
 
-// TODO: Also move behind a feature flag...
+#[cfg(debug_tools)]
 fn parse_to_instructions_and_bytes_for_instruction(
     bytes: Vec<u8>,
 ) -> (InstructionAndBytesParsedFromBuf, CompactParsingResult<()>) {
@@ -1325,7 +1325,6 @@ fn parse_to_instructions_and_bytes_for_instruction(
         .process_into_instructions_and_keep_bytes_parsed_to_instruction_and_bail_on_first_failure()
 }
 
-// TODO: This could probably be made a bit faster...
 fn key_bytes_to_nibbles(bytes: &[u8]) -> Nibbles {
     let mut key = Nibbles::default();
 

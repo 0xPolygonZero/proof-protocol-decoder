@@ -2,7 +2,7 @@ use eth_trie_utils::partial_trie::PartialTrie;
 use plonky2_evm::generation::mpt::AccountRlp;
 
 use super::compact_prestate_processing::{
-    process_compact_prestate_debug, CompactParsingResult, PartialTriePreImages,
+    CompactParsingResult, PartialTriePreImages,
     ProcessedCompactOutput,
 };
 use crate::{

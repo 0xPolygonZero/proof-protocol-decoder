@@ -1,5 +1,5 @@
 pub(crate) mod compact_prestate_processing;
 mod compact_to_partial_trie;
 
-#[cfg(test)]
+#[cfg(debug_tools, test)]
 pub(crate) mod complex_test_payloads;

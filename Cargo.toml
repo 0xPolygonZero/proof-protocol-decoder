@@ -3,6 +3,11 @@ name = "proof_protocol_decoder"
 authors = ["Polygon Zero <bgluth@polygon.technology>"]
 version = "0.1.0"
 edition = "2021"
+resolver = "2"
+
+[features]
+debug_tools = []
+# test = ["proof_protocol_decoder/debug_tools"]
 
 [dependencies]
 bytes = "1.5.0"
@@ -25,3 +30,4 @@ serde_with = "3.4.0"
 
 [dev-dependencies]
 pretty_env_logger = "0.5.0"
+proof_protocol_decoder = { path = ".", features = ["debug_tools"] }
