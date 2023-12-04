@@ -2,8 +2,8 @@ use eth_trie_utils::partial_trie::PartialTrie;
 use plonky2_evm::generation::mpt::AccountRlp;
 
 use super::compact_prestate_processing::{
-    process_compact_prestate, process_compact_prestate_debug, CompactParsingResult,
-    PartialTriePreImages, ProcessedCompactOutput,
+    process_compact_prestate_debug, CompactParsingResult, PartialTriePreImages,
+    ProcessedCompactOutput,
 };
 use crate::{
     trace_protocol::TrieCompact,
@@ -33,10 +33,6 @@ pub(crate) struct TestProtocolInputAndRoot {
 
 impl TestProtocolInputAndRoot {
     pub(crate) fn parse_and_check_hash_matches(self) {
-        self.parse_and_check_hash_matches_common(process_compact_prestate);
-    }
-
-    pub(crate) fn parse_and_check_hash_matches_with_debug(self) {
         self.parse_and_check_hash_matches_common(process_compact_prestate_debug);
     }
 
