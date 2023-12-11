@@ -25,4 +25,7 @@ serde_with = "3.4.0"
 serde_json = "*"
 
 [dev-dependencies]
+paste = "1.0.14"
+# Note: `plonky_block_proof_gen` is going to be merged into this repo soon...
+plonky_block_proof_gen = { git = "https://github.com/0xPolygonZero/plonky-block-proof-gen.git", rev = "4df051aeb0456cda052c21fc99b475f95e690a63" }
 pretty_env_logger = "0.5.0"
