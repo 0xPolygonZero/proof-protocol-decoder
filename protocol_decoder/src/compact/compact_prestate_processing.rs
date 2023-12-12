@@ -1240,7 +1240,7 @@ enum TraverserDirection {
     Both,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct PartialTriePreImages {
     pub(crate) state: HashedPartialTrie,
     pub(crate) storage: HashMap<HashedAccountAddr, HashedPartialTrie>,

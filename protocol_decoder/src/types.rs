@@ -1,4 +1,6 @@
-use eth_trie_utils::nibbles::Nibbles;
+use std::collections::HashMap;
+
+use eth_trie_utils::{nibbles::Nibbles, partial_trie::HashedPartialTrie};
 use ethereum_types::{H256, U256};
 use plonky2_evm::{
     generation::GenerationInputs,
@@ -82,4 +84,14 @@ impl TxnProofGenIR {
             gas_used_after: self.gen_inputs.gas_used_after,
         }
     }
+}
+
+/// The current state of all tries as we process txn deltas. These are mutated
+/// after every txn we process in the trace.
+#[derive(Debug, Default)]
+pub(crate) struct PartialTrieState {
+    pub(crate) state: HashedPartialTrie,
+    pub(crate) storage: HashMap<HashedAccountAddr, HashedPartialTrie>,
+    pub(crate) txn: HashedPartialTrie,
+    pub(crate) receipt: HashedPartialTrie,
 }
