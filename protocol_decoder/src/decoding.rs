@@ -20,9 +20,9 @@ use thiserror::Error;
 use crate::{
     processed_block_trace::{NodesUsedByTxn, ProcessedBlockTrace, StateTrieWrites, TxnMetaState},
     types::{
-        HashedAccountAddr, HashedNodeAddr, HashedStorageAddrNibbles, OtherBlockData, TrieRootHash,
-        TxnIdx, TxnProofGenIR, EMPTY_ACCOUNT_BYTES_RLPED, EMPTY_TRIE_HASH,
-        ZERO_STORAGE_SLOT_VAL_RLPED,
+        HashedAccountAddr, HashedNodeAddr, HashedStorageAddrNibbles, OtherBlockData,
+        PartialTrieState, TrieRootHash, TxnIdx, TxnProofGenIR, EMPTY_ACCOUNT_BYTES_RLPED,
+        EMPTY_TRIE_HASH, ZERO_STORAGE_SLOT_VAL_RLPED,
     },
     utils::{hash, update_val_if_some},
 };
@@ -63,16 +63,6 @@ impl Display for TrieType {
             TrieType::Txn => write!(f, "transaction"),
         }
     }
-}
-
-/// The current state of all tries as we process txn deltas. These are mutated
-/// after every txn we process in the trace.
-#[derive(Debug, Default)]
-struct PartialTrieState {
-    state: HashedPartialTrie,
-    storage: HashMap<HashedAccountAddr, HashedPartialTrie>,
-    txn: HashedPartialTrie,
-    receipt: HashedPartialTrie,
 }
 
 impl ProcessedBlockTrace {

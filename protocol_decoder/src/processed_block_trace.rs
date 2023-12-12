@@ -43,20 +43,17 @@ impl BlockTrace {
     where
         F: CodeHashResolveFunc,
     {
-        let proced_block_trace = self.into_processed_block_trace(p_meta, debug);
-
-        let proced_block_trace_arg = match debug {
-            false => proced_block_trace,
-            true => proced_block_trace.clone(),
-        };
-
-        let res = proced_block_trace.into_txn_proof_gen_ir(proced_block_trace_arg);
-
         match debug {
-            false => res,
+            false => self
+                .into_processed_block_trace(p_meta, debug)
+                .into_txn_proof_gen_ir(other_data),
             true => {
+                let proced_block_trace = self.into_processed_block_trace(p_meta, debug);
+
                 // TODO: React to 'res' and incorporate into error that is
                 // output.
+
+                proced_block_trace.clone().into_txn_proof_gen_ir(other_data)
             }
         }
     }
@@ -226,7 +223,7 @@ where
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct ProcessedTxnInfo {
     pub(crate) nodes_used_by_txn: NodesUsedByTxn,
     pub(crate) contract_code_accessed: HashMap<CodeHash, Vec<u8>>,
@@ -376,7 +373,7 @@ fn create_empty_code_access_map() -> HashMap<CodeHash, Vec<u8>> {
 }
 
 /// Note that "*_accesses" includes writes.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct NodesUsedByTxn {
     pub(crate) state_accesses: Vec<HashedNodeAddr>,
     pub(crate) state_writes: Vec<(HashedAccountAddr, StateTrieWrites)>,
@@ -389,7 +386,7 @@ pub(crate) struct NodesUsedByTxn {
     pub(crate) self_destructed_accounts: Vec<HashedAccountAddr>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct StateTrieWrites {
     pub(crate) balance: Option<U256>,
     pub(crate) nonce: Option<U256>,
@@ -397,7 +394,7 @@ pub(crate) struct StateTrieWrites {
     pub(crate) code_hash: Option<CodeHash>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct TxnMetaState {
     pub(crate) txn_bytes: Option<Vec<u8>>,
     pub(crate) receipt_node_bytes: Vec<u8>,
