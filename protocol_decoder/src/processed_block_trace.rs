@@ -8,7 +8,7 @@ use ethereum_types::U256;
 use plonky2_evm::generation::mpt::{AccountRlp, LegacyReceiptRlp};
 
 use crate::compact::compact_prestate_processing::{
-    process_compact_prestate_debug, PartialTriePreImages,
+    process_compact_prestate, process_compact_prestate_debug, PartialTriePreImages,
 };
 use crate::decoding::TraceParsingResult;
 use crate::trace_protocol::{
@@ -25,7 +25,7 @@ use crate::utils::{
     print_value_and_hash_nodes_of_trie,
 };
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct ProcessedBlockTrace {
     pub(crate) tries: PartialTriePreImages,
     pub(crate) txn_info: Vec<ProcessedTxnInfo>,
@@ -38,21 +38,40 @@ impl BlockTrace {
         self,
         p_meta: &ProcessingMeta<F>,
         other_data: OtherBlockData,
+        debug: bool,
     ) -> TraceParsingResult<Vec<TxnProofGenIR>>
     where
         F: CodeHashResolveFunc,
     {
-        let proced_block_trace = self.into_processed_block_trace(p_meta);
-        proced_block_trace.into_txn_proof_gen_ir(other_data)
+        let proced_block_trace = self.into_processed_block_trace(p_meta, debug);
+
+        let proced_block_trace_arg = match debug {
+            false => proced_block_trace,
+            true => proced_block_trace.clone(),
+        };
+
+        let res = proced_block_trace.into_txn_proof_gen_ir(proced_block_trace_arg);
+
+        match debug {
+            false => res,
+            true => {
+                // TODO: React to 'res' and incorporate into error that is
+                // output.
+            }
+        }
     }
 
-    fn into_processed_block_trace<F>(self, p_meta: &ProcessingMeta<F>) -> ProcessedBlockTrace
+    fn into_processed_block_trace<F>(
+        self,
+        p_meta: &ProcessingMeta<F>,
+        debug: bool,
+    ) -> ProcessedBlockTrace
     where
         F: CodeHashResolveFunc,
     {
         // The compact format is able to provide actual code, so if it does, we should
         // take advantage of it.
-        let pre_image_data = process_block_trace_trie_pre_images(self.trie_pre_images);
+        let pre_image_data = process_block_trace_trie_pre_images(self.trie_pre_images, debug);
 
         print_value_and_hash_nodes_of_trie(&pre_image_data.tries.state);
 
@@ -108,21 +127,28 @@ struct ProcessedBlockTracePreImages {
 
 fn process_block_trace_trie_pre_images(
     block_trace_pre_images: BlockTraceTriePreImages,
+    debug: bool,
 ) -> ProcessedBlockTracePreImages {
     match block_trace_pre_images {
-        BlockTraceTriePreImages::Separate(t) => process_separate_trie_pre_images(t),
-        BlockTraceTriePreImages::Combined(t) => process_combined_trie_pre_images(t),
+        BlockTraceTriePreImages::Separate(t) => process_separate_trie_pre_images(t, debug),
+        BlockTraceTriePreImages::Combined(t) => process_combined_trie_pre_images(t, debug),
     }
 }
 
-fn process_combined_trie_pre_images(tries: CombinedPreImages) -> ProcessedBlockTracePreImages {
-    process_compact_trie(tries.compact)
+fn process_combined_trie_pre_images(
+    tries: CombinedPreImages,
+    debug: bool,
+) -> ProcessedBlockTracePreImages {
+    process_compact_trie(tries.compact, debug)
 }
 
-fn process_separate_trie_pre_images(tries: SeparateTriePreImages) -> ProcessedBlockTracePreImages {
+fn process_separate_trie_pre_images(
+    tries: SeparateTriePreImages,
+    debug: bool,
+) -> ProcessedBlockTracePreImages {
     let tries = PartialTriePreImages {
-        state: process_state_trie(tries.state),
-        storage: process_storage_tries(tries.storage),
+        state: process_state_trie(tries.state, debug),
+        storage: process_storage_tries(tries.storage, debug),
     };
 
     ProcessedBlockTracePreImages {
@@ -131,7 +157,7 @@ fn process_separate_trie_pre_images(tries: SeparateTriePreImages) -> ProcessedBl
     }
 }
 
-fn process_state_trie(trie: SeparateTriePreImage) -> HashedPartialTrie {
+fn process_state_trie(trie: SeparateTriePreImage, _debug: bool) -> HashedPartialTrie {
     match trie {
         SeparateTriePreImage::Uncompressed(_) => todo!(),
         SeparateTriePreImage::Direct(t) => t.0,
@@ -140,28 +166,37 @@ fn process_state_trie(trie: SeparateTriePreImage) -> HashedPartialTrie {
 
 fn process_storage_tries(
     trie: SeparateStorageTriesPreImage,
+    debug: bool,
 ) -> HashMap<HashedAccountAddr, HashedPartialTrie> {
     match trie {
-        SeparateStorageTriesPreImage::SingleTrie(t) => process_single_combined_storage_tries(t),
-        SeparateStorageTriesPreImage::MultipleTries(t) => process_multiple_storage_tries(t),
+        SeparateStorageTriesPreImage::SingleTrie(t) => {
+            process_single_combined_storage_tries(t, debug)
+        }
+        SeparateStorageTriesPreImage::MultipleTries(t) => process_multiple_storage_tries(t, debug),
     }
 }
 
 fn process_single_combined_storage_tries(
     _trie: TrieUncompressed,
+    _debug: bool,
 ) -> HashMap<HashedAccountAddr, HashedPartialTrie> {
     todo!()
 }
 
 fn process_multiple_storage_tries(
     _tries: HashMap<HashedAccountAddr, SeparateTriePreImage>,
+    _debug: bool,
 ) -> HashMap<HashedAccountAddr, HashedPartialTrie> {
     todo!()
 }
 
-fn process_compact_trie(trie: TrieCompact) -> ProcessedBlockTracePreImages {
+fn process_compact_trie(trie: TrieCompact, debug: bool) -> ProcessedBlockTracePreImages {
     // TODO: Wrap in proper result type...
-    let out = process_compact_prestate_debug(trie).unwrap();
+    let out = match debug {
+        false => process_compact_prestate(trie),
+        true => process_compact_prestate_debug(trie),
+    }
+    .unwrap();
 
     // TODO: Make this into a result...
     assert!(out.header.version_is_compatible(COMPATIBLE_HEADER_VERSION));
