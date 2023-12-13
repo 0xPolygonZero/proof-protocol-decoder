@@ -115,12 +115,12 @@ impl BlockTrace {
 }
 
 #[derive(Debug)]
-struct ProcessedBlockTracePreImages {
-    tries: PartialTriePreImages,
-    extra_code_hash_mappings: Option<HashMap<CodeHash, Vec<u8>>>,
+pub(crate) struct ProcessedBlockTracePreImages {
+    pub(crate) tries: PartialTriePreImages,
+    pub(crate) extra_code_hash_mappings: Option<HashMap<CodeHash, Vec<u8>>>,
 }
 
-fn process_block_trace_trie_pre_images(
+pub(crate) fn process_block_trace_trie_pre_images(
     block_trace_pre_images: BlockTraceTriePreImages,
     debug: bool,
 ) -> ProcessedBlockTracePreImages {

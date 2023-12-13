@@ -3,18 +3,21 @@
 use core::fmt;
 use std::{collections::HashMap, fmt::Display};
 
-use eth_trie_utils::partial_trie::PartialTrie;
+use eth_trie_utils::partial_trie::{HashedPartialTrie, PartialTrie};
 use ethereum_types::Address;
 use plonky2_evm::generation::mpt::AccountRlp;
 use thiserror::Error;
 
 use crate::{
     compact::compact_prestate_processing::PartialTriePreImages,
-    processed_block_trace::{ProcessedBlockTrace, ProcessingMeta},
+    processed_block_trace::{
+        process_block_trace_trie_pre_images, ProcessedBlockTrace, ProcessingMeta,
+    },
     trace_protocol::{BlockTrace, TxnInfo},
     types::{
-        CodeHashResolveFunc, HashedAccountAddr, HashedAccountAddrNibbles, HashedStorageAddr,
-        HashedStorageAddrNibbles, PartialTrieState, StorageAddr, TxnProofGenIR,
+        CodeHash, CodeHashResolveFunc, HashedAccountAddr, HashedAccountAddrNibbles,
+        HashedStorageAddr, HashedStorageAddrNibbles, PartialTrieState, StorageAddr, TrieRootHash,
+        TxnProofGenIR,
     },
     utils::{get_leaf_vals_from_trie_and_decode, hash},
 };
@@ -46,11 +49,21 @@ impl fmt::Display for TraceVerificationErrors {
     }
 }
 
-#[derive(Clone, Debug)]
-pub enum TraceVerificationError {}
+#[derive(Clone, Debug, Error)]
+pub enum TraceVerificationError {
+    #[error("No storage trie supplied for storage root {2:x} which is referenced by account {0} (hashed: {1:x})")]
+    MissingStorageTrieForAccount(
+        HashLookupAttempt<Address>,
+        HashedAccountAddrNibbles,
+        TrieRootHash,
+    ),
 
-pub enum PreStateVerificationError {
-    MissingStorageTrieForAccount(HashLookupAttempt<Address>, HashedAccountAddrNibbles),
+    #[error("No contract bytecode supplied for code hash {2:x} which is referenced by account {0} (hashed: {1:x})")]
+    MissingContractCodeForAccount(
+        HashLookupAttempt<Address>,
+        HashedAccountAddrNibbles,
+        CodeHash,
+    ),
 }
 
 /// Wrapper around an `Option` just to make errors a bit more readable.
@@ -82,45 +95,77 @@ pub(crate) fn verify_proof_gen_ir<F: CodeHashResolveFunc>(
     b_trace: &BlockTrace,
     p_meta: &ProcessingMeta<F>,
 ) -> TraceVerificationResult<()> {
-    let proced_b_trace = b_trace.clone().into_processed_block_trace(p_meta, false);
-    let reverse_hash_mapping =
-        create_addr_to_hashed_addr_mapping(&proced_b_trace.tries, &b_trace.txn_info);
+    let mut err_buf = Vec::default();
+    let pre_image = process_block_trace_trie_pre_images(b_trace.trie_pre_images.clone(), false);
+    let code_supplied_by_pre_image = pre_image.extra_code_hash_mappings.unwrap_or_default();
 
-    verify_all_prestate_account_entries_point_to_valid_data(
-        &proced_b_trace.tries,
+    let reverse_hash_mapping =
+        create_addr_to_hashed_addr_mapping(&pre_image.tries, &b_trace.txn_info);
+
+    verify_all_referenced_code_exists_in_code_mapping(
+        &pre_image.tries.state,
+        &code_supplied_by_pre_image,
         &reverse_hash_mapping,
+        &mut err_buf,
     );
 
-    Ok(())
+    let proced_b_trace = b_trace.clone().into_processed_block_trace(p_meta, false);
+    verify_all_prestate_storage_entries_point_to_existing_tries(
+        &proced_b_trace.tries,
+        &reverse_hash_mapping,
+        &mut err_buf,
+    );
+
+    match err_buf.is_empty() {
+        false => Err(TraceVerificationErrors { errs: err_buf }),
+        true => Ok(()),
+    }
 }
 
-fn verify_all_prestate_account_entries_point_to_valid_data(
-    pre_state: &PartialTriePreImages,
+fn verify_all_prestate_storage_entries_point_to_existing_tries(
+    pre_image: &PartialTriePreImages,
     reverse_hash_mapping: &ReverseHashMapping,
-) -> Vec<PreStateVerificationError> {
-    let mut errs = Vec::default();
-
-    for (h_addr, acc) in get_leaf_vals_from_trie_and_decode::<AccountRlp>(&pre_state.state) {
-        if !pre_state.storage.contains_key(&acc.storage_root) {
+    err_buf: &mut Vec<TraceVerificationError>,
+) {
+    for (h_addr, acc) in get_leaf_vals_from_trie_and_decode::<AccountRlp>(&pre_image.state) {
+        if !pre_image.storage.contains_key(&acc.storage_root) {
             let addr_lookup_attempt = reverse_hash_mapping.hashed_addr_to_addr[&h_addr].clone();
-            errs.push(PreStateVerificationError::MissingStorageTrieForAccount(
+
+            err_buf.push(TraceVerificationError::MissingStorageTrieForAccount(
                 addr_lookup_attempt,
                 h_addr,
+                acc.storage_root,
             ));
         }
-
-        // TODO: Also verify code hashes...
     }
-
-    errs
 }
 
 fn verify_all_account_storage_roots_exist_in_account_partial_trie() {
     todo!();
 }
 
-fn verify_all_referenced_code_exists_in_code_mapping() {
-    todo!();
+fn verify_all_referenced_code_exists_in_code_mapping(
+    pre_image_state: &HashedPartialTrie,
+    code_supplied_by_pre_image: &HashMap<CodeHash, Vec<u8>>,
+    reverse_hash_mapping: &ReverseHashMapping,
+    err_buf: &mut Vec<TraceVerificationError>,
+) {
+    // TODO: For now, we are going to make the assumption that all byte code is
+    // provided in the pre-state trie. This assumption may change in the future, and
+    // if it does, we should either remove this check or put it behind a config
+    // flag.
+
+    for (h_addr, acc) in get_leaf_vals_from_trie_and_decode::<AccountRlp>(pre_image_state) {
+        if !code_supplied_by_pre_image.contains_key(&acc.code_hash) {
+            let addr_lookup_attempt = &reverse_hash_mapping.hashed_addr_to_addr[&h_addr];
+
+            err_buf.push(TraceVerificationError::MissingContractCodeForAccount(
+                addr_lookup_attempt.clone(),
+                h_addr,
+                acc.code_hash,
+            ));
+        }
+    }
 }
 
 fn verify_all_pre_image_nodes_are_accessed_throughout_the_block() {
