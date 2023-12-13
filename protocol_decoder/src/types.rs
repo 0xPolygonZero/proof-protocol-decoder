@@ -14,6 +14,7 @@ pub type BlockHeight = u64;
 pub type Bloom = [U256; 8];
 pub type CodeHash = H256;
 pub type HashedAccountAddr = H256;
+pub type HashedAccountAddrNibbles = Nibbles;
 pub type HashedNodeAddr = H256;
 pub type HashedStorageAddr = H256;
 pub type HashedStorageAddrNibbles = Nibbles;

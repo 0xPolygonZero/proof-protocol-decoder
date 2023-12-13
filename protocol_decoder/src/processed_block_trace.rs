@@ -45,7 +45,7 @@ impl BlockTrace {
         F: CodeHashResolveFunc,
     {
         if debug {
-            verify_proof_gen_ir(&self)?;
+            verify_proof_gen_ir(&self, p_meta)?;
         }
 
         // TODO: Potential small optimization. Don't clone and process the trace twice
@@ -56,7 +56,7 @@ impl BlockTrace {
             .into_txn_proof_gen_ir(other_data)
     }
 
-    fn into_processed_block_trace<F>(
+    pub(crate) fn into_processed_block_trace<F>(
         self,
         p_meta: &ProcessingMeta<F>,
         debug: bool,
