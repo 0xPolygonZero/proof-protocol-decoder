@@ -11,6 +11,7 @@ use crate::compact::compact_prestate_processing::{
     process_compact_prestate, process_compact_prestate_debug, PartialTriePreImages,
 };
 use crate::decoding::TraceParsingResult;
+use crate::trace_debug_tooling::verification::verify_proof_gen_ir;
 use crate::trace_protocol::{
     BlockTrace, BlockTraceTriePreImages, CombinedPreImages, ContractCodeUsage,
     SeparateStorageTriesPreImage, SeparateTriePreImage, SeparateTriePreImages, TrieCompact,
@@ -43,19 +44,16 @@ impl BlockTrace {
     where
         F: CodeHashResolveFunc,
     {
-        match debug {
-            false => self
-                .into_processed_block_trace(p_meta, debug)
-                .into_txn_proof_gen_ir(other_data),
-            true => {
-                let proced_block_trace = self.into_processed_block_trace(p_meta, debug);
-
-                // TODO: React to 'res' and incorporate into error that is
-                // output.
-
-                proced_block_trace.clone().into_txn_proof_gen_ir(other_data)
-            }
+        if debug {
+            verify_proof_gen_ir(&self)?;
         }
+
+        // TODO: Potential small optimization. Don't clone and process the trace twice
+        // if we're verifying the trace. TODO: React to 'res' and incorporate
+        // into error that is output.
+
+        self.into_processed_block_trace(p_meta, debug)
+            .into_txn_proof_gen_ir(other_data)
     }
 
     fn into_processed_block_trace<F>(
