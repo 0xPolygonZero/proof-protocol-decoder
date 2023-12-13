@@ -46,6 +46,19 @@ fn print_value_and_hash_nodes_of_trie_common(trie: &HashedPartialTrie) -> Vec<St
         .collect()
 }
 
+pub(crate) fn get_leaf_vals_from_trie_and_decode<T: rlp::Decodable>(
+    trie: &HashedPartialTrie,
+) -> impl Iterator<Item = (Nibbles, T)> + '_ {
+    get_leaf_vals_from_trie(trie).map(|(k, v)| (k, rlp::decode(&v).unwrap()))
+}
+
+pub(crate) fn get_leaf_vals_from_trie(
+    trie: &HashedPartialTrie,
+) -> impl Iterator<Item = (Nibbles, Vec<u8>)> + '_ {
+    trie.items()
+        .filter_map(|(k, v)| v.into_val().map(|v| (k, v)).ok())
+}
+
 pub(crate) fn h_addr_nibs_to_h256(h_addr_nibs: &Nibbles) -> H256 {
     // TODO: HACK! This fix really needs to be in `eth_trie_utils`...
     let mut nib_bytes = h_addr_nibs.bytes_be();
