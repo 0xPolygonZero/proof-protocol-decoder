@@ -19,6 +19,7 @@ use thiserror::Error;
 
 use crate::{
     processed_block_trace::{NodesUsedByTxn, ProcessedBlockTrace, StateTrieWrites, TxnMetaState},
+    trace_debug_tooling::verification::TraceVerificationErrors,
     types::{
         HashedAccountAddr, HashedNodeAddr, HashedStorageAddrNibbles, OtherBlockData,
         PartialTrieState, TrieRootHash, TxnIdx, TxnProofGenIR, EMPTY_ACCOUNT_BYTES_RLPED,
@@ -44,6 +45,9 @@ pub enum TraceParsingError {
     // placeholder.
     #[error("Missing keys when creating sub-partial tries (Trie type: {0})")]
     MissingKeysCreatingSubPartialTrie(TrieType),
+
+    #[error("A trace failed verification. This is likely a bug in the source creating the trace, but may also be an issue in the decoder itself.\nThe following errors occurred:\n{0}")]
+    VerificationError(#[from] TraceVerificationErrors),
 }
 
 #[derive(Debug)]
