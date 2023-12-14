@@ -44,8 +44,14 @@ pub struct TraceVerificationErrors {
 }
 
 impl fmt::Display for TraceVerificationErrors {
-    fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        todo!()
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "The following verification errors occurred:")?;
+
+        for err in self.errs.iter() {
+            writeln!(f, "{}", err)?;
+        }
+
+        Ok(())
     }
 }
 
