@@ -1,10 +1,14 @@
 // TODO: Replace all `unwraps()` with actual errors...
 
 use core::fmt;
-use std::{collections::HashMap, fmt::Display};
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Display,
+};
 
 use eth_trie_utils::partial_trie::{HashedPartialTrie, PartialTrie};
-use ethereum_types::Address;
+use ethereum_types::{Address, H256};
+use lazy_static::lazy_static;
 use plonky2_evm::generation::mpt::AccountRlp;
 use thiserror::Error;
 
@@ -17,9 +21,9 @@ use crate::{
     types::{
         CodeHash, CodeHashResolveFunc, HashedAccountAddr, HashedAccountAddrNibbles,
         HashedStorageAddr, HashedStorageAddrNibbles, PartialTrieState, StorageAddr, TrieRootHash,
-        TxnProofGenIR,
+        TxnProofGenIR, EMPTY_CODE_HASH, EMPTY_TRIE_HASH,
     },
-    utils::{get_leaf_vals_from_trie_and_decode, hash},
+    utils::{get_leaf_vals_from_trie, get_leaf_vals_from_trie_and_decode, hash},
 };
 
 // All account storage roots in accounts exist in the storage trie after each
@@ -30,6 +34,15 @@ use crate::{
 // Check that all roots match rpc call to full node.
 
 pub(crate) type TraceVerificationResult<T> = Result<T, TraceVerificationErrors>;
+
+lazy_static! {
+    static ref CODE_HASHES_TO_IGNORE: HashSet<H256> = HashSet::from_iter([
+        EMPTY_CODE_HASH,
+
+        // 0xb2215962e474d5360ab55e2899ff6505f25d4d054f5fedf80e29a26ecf4e53e5 (Not sure what this is, but plonky2 doesn't need it.)
+        H256([178, 33, 89, 98, 228, 116, 213, 54, 10, 181, 94, 40, 153, 255, 101, 5, 242, 93, 77, 5, 79, 95, 237, 248, 14, 41, 162, 110, 207, 78, 83, 229])
+    ]);
+}
 
 #[derive(Debug)]
 pub(crate) struct GeneratedProofAndDebugInfo {
@@ -134,7 +147,8 @@ fn verify_all_prestate_storage_entries_point_to_existing_tries(
     err_buf: &mut Vec<TraceVerificationError>,
 ) {
     for (h_addr, acc) in get_leaf_vals_from_trie_and_decode::<AccountRlp>(&pre_image.state) {
-        if !pre_image.storage.contains_key(&acc.storage_root) {
+        if acc.storage_root != EMPTY_TRIE_HASH && !pre_image.storage.contains_key(&acc.storage_root)
+        {
             let addr_lookup_attempt = reverse_hash_mapping.hashed_addr_to_addr[&h_addr].clone();
 
             err_buf.push(TraceVerificationError::MissingStorageTrieForAccount(
@@ -162,7 +176,9 @@ fn verify_all_referenced_code_exists_in_code_mapping(
     // flag.
 
     for (h_addr, acc) in get_leaf_vals_from_trie_and_decode::<AccountRlp>(pre_image_state) {
-        if !code_supplied_by_pre_image.contains_key(&acc.code_hash) {
+        if !CODE_HASHES_TO_IGNORE.contains(&acc.code_hash)
+            && !code_supplied_by_pre_image.contains_key(&acc.code_hash)
+        {
             let addr_lookup_attempt = &reverse_hash_mapping.hashed_addr_to_addr[&h_addr];
 
             err_buf.push(TraceVerificationError::MissingContractCodeForAccount(
@@ -218,10 +234,8 @@ fn create_addr_to_hashed_addr_mapping(
         })
         .collect();
 
-    let hashed_addr_to_addr = pre_state
-        .state
-        .keys()
-        .map(|h_addr_nibs| {
+    let hashed_addr_to_addr = get_leaf_vals_from_trie(&pre_state.state)
+        .map(|(h_addr_nibs, _)| {
             let h_addr = HashedAccountAddr::from_slice(&h_addr_nibs.bytes_be());
             let addr_lookup_res = trace_addr_to_h_addr.get(&h_addr).cloned().into();
 
@@ -233,7 +247,7 @@ fn create_addr_to_hashed_addr_mapping(
         .storage
         .iter()
         .flat_map(|(_, s_trie)| {
-            s_trie.items().map(|(h_slot_nibs, _)| {
+            get_leaf_vals_from_trie(s_trie).map(|(h_slot_nibs, _)| {
                 let h_slot = HashedStorageAddr::from_slice(&h_slot_nibs.bytes_be());
                 let slot_lookup_res = trace_slot_to_h_slot.get(&h_slot).cloned().into();
 
