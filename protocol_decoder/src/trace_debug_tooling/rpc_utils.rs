@@ -22,15 +22,15 @@ pub(super) struct RpcRequest<'a, U: IntoUrl> {
     params: &'a [String],
 }
 
-pub(super) async fn rpc_request<'a, T, U>(req: &'a RpcRequest<'a, U>) -> VerifierRpcResult<T>
+pub(super) async fn rpc_request<'a, T, U>(req: RpcRequest<'a, U>) -> VerifierRpcResult<T>
 where
     T: DeserializeOwned,
-    U: Clone + IntoUrl,
+    U: IntoUrl,
 {
     let client = reqwest::Client::new();
 
     let resp = client
-        .post(req.endpoint.clone())
+        .post(req.endpoint)
         .json(&json_req_payload(req.method, req.params))
         .send()
         .await?;
@@ -58,7 +58,7 @@ pub(super) struct GetBlockByNumberResponse {
 }
 
 impl GetBlockByNumberResponse {
-    pub(super) async fn fetch<U: Clone + IntoUrl>(
+    pub(super) async fn fetch<U: IntoUrl>(
         endpoint: U,
         b_height: BlockHeight,
     ) -> VerifierRpcResult<Self> {
@@ -68,6 +68,6 @@ impl GetBlockByNumberResponse {
             params: &[b_height.to_string(), "false".into()],
         };
 
-        rpc_request(&req).await
+        rpc_request(req).await
     }
 }
