@@ -50,7 +50,7 @@ pub enum TraceParsingError {
     VerificationError(#[from] TraceVerificationErrors),
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug)]
 pub enum TrieType {
     State,
     Storage,

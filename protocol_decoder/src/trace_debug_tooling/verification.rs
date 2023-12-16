@@ -8,19 +8,22 @@ use std::{
 
 use eth_trie_utils::partial_trie::HashedPartialTrie;
 use ethereum_types::{Address, H256};
-use plonky2_evm::generation::mpt::AccountRlp;
+use plonky2_evm::{generation::mpt::AccountRlp, proof::TrieRoots};
+use reqwest::IntoUrl;
 use thiserror::Error;
 
+use super::rpc_utils::GetBlockByNumberResponse;
 use crate::{
     compact::compact_prestate_processing::PartialTriePreImages,
+    decoding::TrieType,
     processed_block_trace::{
         process_block_trace_trie_pre_images, ProcessedBlockTrace, ProcessedTxnInfo, ProcessingMeta,
     },
     trace_protocol::{BlockTrace, TxnInfo},
     types::{
-        CodeHash, CodeHashResolveFunc, HashedAccountAddr, HashedAccountAddrNibbles,
-        HashedStorageAddr, HashedStorageAddrNibbles, PartialTrieState, StorageAddr, TrieRootHash,
-        TxnProofGenIR, EMPTY_CODE_HASH, EMPTY_TRIE_HASH,
+        BlockHeight, CodeHash, CodeHashResolveFunc, HashedAccountAddr, HashedAccountAddrNibbles,
+        HashedStorageAddr, HashedStorageAddrNibbles, OtherBlockData, PartialTrieState, StorageAddr,
+        TrieRootHash, TxnProofGenIR, EMPTY_CODE_HASH, EMPTY_TRIE_HASH,
     },
     utils::{get_leaf_vals_from_trie, get_leaf_vals_from_trie_and_decode, hash},
 };
@@ -73,6 +76,9 @@ pub enum TraceVerificationError {
         HashedAccountAddrNibbles,
         CodeHash,
     ),
+
+    #[error("The decoder calculated a different trie root that the upstream block trace provider (eg. fullnode) arrived at (type: {0}, decoder: {1:x}, upstream: {2:x})")]
+    DecoderFinalTrieRootMismatch(TrieType, TrieRootHash, TrieRootHash),
 }
 
 /// Wrapper around an `Option` just to make errors a bit more readable.
@@ -103,6 +109,7 @@ struct ReverseHashMapping {
 pub(crate) fn verify_proof_gen_ir<F: CodeHashResolveFunc>(
     b_trace: &BlockTrace,
     p_meta: &ProcessingMeta<F>,
+    other_data: &OtherBlockData,
 ) -> TraceVerificationResult<()> {
     let mut err_buf = Vec::default();
     let pre_image = process_block_trace_trie_pre_images(b_trace.trie_pre_images.clone(), false);
@@ -112,6 +119,7 @@ pub(crate) fn verify_proof_gen_ir<F: CodeHashResolveFunc>(
         create_addr_to_hashed_addr_mapping(&pre_image.tries, &b_trace.txn_info);
 
     let proced_b_trace = b_trace.clone().into_processed_block_trace(p_meta, false);
+    let all_storage_accessed = get_all_storage_tries_that_are_accessed(&proced_b_trace.txn_info);
 
     verify_all_referenced_code_exists_in_code_mapping(
         &pre_image.tries.state,
@@ -128,20 +136,45 @@ pub(crate) fn verify_proof_gen_ir<F: CodeHashResolveFunc>(
         &mut err_buf,
     );
 
+    let ir = proced_b_trace
+        .into_txn_proof_gen_ir(other_data.clone())
+        .unwrap();
+    rpc_verification_checks(&ir, endpoint, err_buf);
+
     match err_buf.is_empty() {
         false => Err(TraceVerificationErrors { errs: err_buf }),
         true => Ok(()),
     }
 }
 
+async fn rpc_verification_checks<U: IntoUrl>(
+    ir: &[TxnProofGenIR],
+    all_storage_accessed: HashSet<HashedAccountAddr>,
+    endpoint: U,
+    err_buf: &mut Vec<TraceVerificationError>,
+) -> anyhow::Result<()> {
+    if let Some(final_txn_ir) = ir.last() {
+        let b_height = final_txn_ir.b_height();
+        
+        verify_all_final_trie_roots_match_full_node(
+            &final_txn_ir.gen_inputs.trie_roots_after,
+            b_height,
+            endpoint,
+            err_buf,
+        )
+        .await?;
+    }
+
+    Ok(())
+}
+
 fn verify_all_prestate_storage_entries_point_to_existing_tries(
     pre_image: &PartialTriePreImages,
     traces: &[ProcessedTxnInfo],
     reverse_hash_mapping: &ReverseHashMapping,
+    contract_storage_accessed: &HashSet<HashedAccountAddr>,
     err_buf: &mut Vec<TraceVerificationError>,
 ) {
-    let contract_storage_accessed = get_all_storage_tries_that_are_accessed(traces);
-
     for (h_addr, acc) in get_leaf_vals_from_trie_and_decode::<AccountRlp>(&pre_image.state) {
         if acc.storage_root != EMPTY_TRIE_HASH
             && contract_storage_accessed.contains(&acc.storage_root)
@@ -227,8 +260,74 @@ fn verify_all_account_entry_nodes_match_full_node() {
     todo!();
 }
 
-fn verify_all_final_trie_roots_match_full_node() {
-    todo!();
+async fn verify_all_final_trie_roots_match_full_node<U: IntoUrl>(
+    decoder_final_trie_roots: &TrieRoots,
+    raw_traces: &[TxnInfo],
+    storage_tries: 
+    b_height: BlockHeight,
+    endpoint: U,
+    err_buf: &mut Vec<TraceVerificationError>,
+) -> anyhow::Result<()> {
+    let resp = GetBlockByNumberResponse::fetch(endpoint, b_height).await?;
+
+    push_trie_root_mismatch_error_if_roots_differ(
+        &decoder_final_trie_roots.state_root,
+        &resp.state_root,
+        TrieType::State,
+        err_buf,
+    );
+    
+    // push_trie_root_mismatch_error_if_roots_differ(&decoder_final_trie_roots.
+    // state_root, &resp.state_root, TrieType::State, err_buf);
+    push_trie_root_mismatch_error_if_roots_differ(
+        &decoder_final_trie_roots.transactions_root,
+        &resp.txn_root,
+        TrieType::Txn,
+        err_buf,
+    );
+    push_trie_root_mismatch_error_if_roots_differ(
+        &decoder_final_trie_roots.receipts_root,
+        &resp.receipts_root,
+        TrieType::Receipt,
+        err_buf,
+    );
+
+    get_all_storage_roots_from_upstream(raw_traces, )
+
+    Ok(())
+}
+
+// Note: We can only verify the storage roots that are mentioned in the trace
+// because the pre-image only contains addresses that are hashed.
+fn get_all_storage_roots_from_upstream<U: IntoUrl>(
+    raw_traces: &[TxnInfo],
+    s_tries: &HashMap<HashedStorageAddr, HashedPartialTrie>,
+    endpoint: U,
+) -> anyhow::Result<HashMap<HashedAccountAddr, TrieRootHash>> {
+    let all_addresses_that_mutate_storage = raw_traces.into_iter().flat_map(|txn_info| {
+        txn_info.traces.iter().filter_map(|(addr, trace)| {
+            trace
+                .storage_written
+                .and_then(|s| s.is_empty().then(|| *addr))
+        })
+    });
+
+    all_addresses_that_mutate_storage.map(|addr| )
+}
+
+fn push_trie_root_mismatch_error_if_roots_differ(
+    our_root: &TrieRootHash,
+    upstream_root: &TrieRootHash,
+    trie_type: TrieType,
+    err_buf: &mut Vec<TraceVerificationError>,
+) {
+    if our_root != upstream_root {
+        err_buf.push(TraceVerificationError::DecoderFinalTrieRootMismatch(
+            trie_type,
+            *our_root,
+            *upstream_root,
+        ));
+    }
 }
 
 fn create_addr_to_hashed_addr_mapping(
