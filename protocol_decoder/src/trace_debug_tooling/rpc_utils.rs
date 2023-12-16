@@ -1,7 +1,9 @@
-use reqwest::Url;
-use serde::de::DeserializeOwned;
+use reqwest::IntoUrl;
+use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::json;
 use thiserror::Error;
+
+use crate::types::{BlockHeight, TrieRootHash};
 
 pub type VerifierRpcResult<T> = Result<T, VerifierRpcError>;
 
@@ -14,18 +16,22 @@ pub enum VerifierRpcError {
     Deserialize(#[from] serde_json::Error),
 }
 
-pub(super) struct RpcRequest {
-    endpoint: Url,
+pub(super) struct RpcRequest<'a, U: IntoUrl> {
+    endpoint: U,
     method: &'static str,
-    params: Vec<String>,
+    params: &'a [String],
 }
 
-pub(super) async fn rpc_request<T: DeserializeOwned>(req: &RpcRequest) -> VerifierRpcResult<T> {
+pub(super) async fn rpc_request<'a, T, U>(req: &'a RpcRequest<'a, U>) -> VerifierRpcResult<T>
+where
+    T: DeserializeOwned,
+    U: Clone + IntoUrl,
+{
     let client = reqwest::Client::new();
 
     let resp = client
         .post(req.endpoint.clone())
-        .json(&json_req_payload(req.method, &req.params))
+        .json(&json_req_payload(req.method, req.params))
         .send()
         .await?;
 
@@ -42,4 +48,26 @@ fn json_req_payload(method: &str, params: &[String]) -> serde_json::Value {
         "params": params,
         "id": 1,
     })
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct GetBlockByNumberResponse {
+    pub(super) state_root: TrieRootHash,
+    pub(super) receipts_root: TrieRootHash,
+    pub(super) txn_root: TrieRootHash,
+}
+
+impl GetBlockByNumberResponse {
+    pub(super) async fn fetch<U: Clone + IntoUrl>(
+        endpoint: U,
+        b_height: BlockHeight,
+    ) -> VerifierRpcResult<Self> {
+        let req = RpcRequest {
+            endpoint,
+            method: "eth_getBlockByNumber",
+            params: &[b_height.to_string(), "false".into()],
+        };
+
+        rpc_request(&req).await
+    }
 }
