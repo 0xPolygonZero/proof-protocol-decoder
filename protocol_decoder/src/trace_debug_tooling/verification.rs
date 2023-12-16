@@ -3,19 +3,18 @@
 use core::fmt;
 use std::{
     collections::{HashMap, HashSet},
-    fmt::Display,
+    fmt::{Display, LowerHex},
 };
 
-use eth_trie_utils::partial_trie::{HashedPartialTrie, PartialTrie};
+use eth_trie_utils::partial_trie::HashedPartialTrie;
 use ethereum_types::{Address, H256};
-use lazy_static::lazy_static;
 use plonky2_evm::generation::mpt::AccountRlp;
 use thiserror::Error;
 
 use crate::{
     compact::compact_prestate_processing::PartialTriePreImages,
     processed_block_trace::{
-        process_block_trace_trie_pre_images, ProcessedBlockTrace, ProcessingMeta,
+        process_block_trace_trie_pre_images, ProcessedBlockTrace, ProcessedTxnInfo, ProcessingMeta,
     },
     trace_protocol::{BlockTrace, TxnInfo},
     types::{
@@ -34,15 +33,6 @@ use crate::{
 // Check that all roots match rpc call to full node.
 
 pub(crate) type TraceVerificationResult<T> = Result<T, TraceVerificationErrors>;
-
-lazy_static! {
-    static ref CODE_HASHES_TO_IGNORE: HashSet<H256> = HashSet::from_iter([
-        EMPTY_CODE_HASH,
-
-        // 0xb2215962e474d5360ab55e2899ff6505f25d4d054f5fedf80e29a26ecf4e53e5 (Not sure what this is, but plonky2 doesn't need it.)
-        H256([178, 33, 89, 98, 228, 116, 213, 54, 10, 181, 94, 40, 153, 255, 101, 5, 242, 93, 77, 5, 79, 95, 237, 248, 14, 41, 162, 110, 207, 78, 83, 229])
-    ]);
-}
 
 #[derive(Debug)]
 pub(crate) struct GeneratedProofAndDebugInfo {
@@ -87,18 +77,18 @@ pub enum TraceVerificationError {
 
 /// Wrapper around an `Option` just to make errors a bit more readable.
 #[derive(Clone, Debug)]
-struct HashLookupAttempt<T: Display>(Option<T>);
+struct HashLookupAttempt<T: LowerHex>(Option<T>);
 
-impl<T: Display> Display for HashLookupAttempt<T> {
+impl<T: LowerHex> Display for HashLookupAttempt<T> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.0 {
-            Some(v) => write!(f, "{}", v),
+            Some(v) => write!(f, "{:x}", v),
             None => write!(f, "Unknown"),
         }
     }
 }
 
-impl<T: Display> From<Option<T>> for HashLookupAttempt<T> {
+impl<T: LowerHex> From<Option<T>> for HashLookupAttempt<T> {
     fn from(v: Option<T>) -> Self {
         Self(v)
     }
@@ -121,16 +111,19 @@ pub(crate) fn verify_proof_gen_ir<F: CodeHashResolveFunc>(
     let reverse_hash_mapping =
         create_addr_to_hashed_addr_mapping(&pre_image.tries, &b_trace.txn_info);
 
+    let proced_b_trace = b_trace.clone().into_processed_block_trace(p_meta, false);
+
     verify_all_referenced_code_exists_in_code_mapping(
         &pre_image.tries.state,
+        &proced_b_trace.txn_info,
         &code_supplied_by_pre_image,
         &reverse_hash_mapping,
         &mut err_buf,
     );
 
-    let proced_b_trace = b_trace.clone().into_processed_block_trace(p_meta, false);
     verify_all_prestate_storage_entries_point_to_existing_tries(
         &proced_b_trace.tries,
+        &proced_b_trace.txn_info,
         &reverse_hash_mapping,
         &mut err_buf,
     );
@@ -143,11 +136,16 @@ pub(crate) fn verify_proof_gen_ir<F: CodeHashResolveFunc>(
 
 fn verify_all_prestate_storage_entries_point_to_existing_tries(
     pre_image: &PartialTriePreImages,
+    traces: &[ProcessedTxnInfo],
     reverse_hash_mapping: &ReverseHashMapping,
     err_buf: &mut Vec<TraceVerificationError>,
 ) {
+    let contract_storage_accessed = get_all_storage_tries_that_are_accessed(traces);
+
     for (h_addr, acc) in get_leaf_vals_from_trie_and_decode::<AccountRlp>(&pre_image.state) {
-        if acc.storage_root != EMPTY_TRIE_HASH && !pre_image.storage.contains_key(&acc.storage_root)
+        if acc.storage_root != EMPTY_TRIE_HASH
+            && contract_storage_accessed.contains(&acc.storage_root)
+            && !pre_image.storage.contains_key(&acc.storage_root)
         {
             let addr_lookup_attempt = reverse_hash_mapping.hashed_addr_to_addr[&h_addr].clone();
 
@@ -160,12 +158,27 @@ fn verify_all_prestate_storage_entries_point_to_existing_tries(
     }
 }
 
+fn get_all_storage_tries_that_are_accessed(
+    traces: &[ProcessedTxnInfo],
+) -> HashSet<HashedAccountAddr> {
+    traces
+        .iter()
+        .flat_map(|t| {
+            t.nodes_used_by_txn
+                .storage_accesses
+                .iter()
+                .map(|(h_addr, _)| H256::from_slice(&h_addr.bytes_be()))
+        })
+        .collect()
+}
+
 fn verify_all_account_storage_roots_exist_in_account_partial_trie() {
     todo!();
 }
 
 fn verify_all_referenced_code_exists_in_code_mapping(
     pre_image_state: &HashedPartialTrie,
+    traces: &[ProcessedTxnInfo],
     code_supplied_by_pre_image: &HashMap<CodeHash, Vec<u8>>,
     reverse_hash_mapping: &ReverseHashMapping,
     err_buf: &mut Vec<TraceVerificationError>,
@@ -175,8 +188,11 @@ fn verify_all_referenced_code_exists_in_code_mapping(
     // if it does, we should either remove this check or put it behind a config
     // flag.
 
+    let all_code_hashes_accessed = get_all_contract_code_hashes_that_are_accessed(traces);
+
     for (h_addr, acc) in get_leaf_vals_from_trie_and_decode::<AccountRlp>(pre_image_state) {
-        if !CODE_HASHES_TO_IGNORE.contains(&acc.code_hash)
+        if acc.code_hash != EMPTY_CODE_HASH
+            && all_code_hashes_accessed.contains(&acc.code_hash)
             && !code_supplied_by_pre_image.contains_key(&acc.code_hash)
         {
             let addr_lookup_attempt = &reverse_hash_mapping.hashed_addr_to_addr[&h_addr];
@@ -188,6 +204,15 @@ fn verify_all_referenced_code_exists_in_code_mapping(
             ));
         }
     }
+}
+
+fn get_all_contract_code_hashes_that_are_accessed(
+    traces: &[ProcessedTxnInfo],
+) -> HashSet<CodeHash> {
+    traces
+        .iter()
+        .flat_map(|t| t.contract_code_accessed.keys().cloned())
+        .collect()
 }
 
 fn verify_all_pre_image_nodes_are_accessed_throughout_the_block() {
