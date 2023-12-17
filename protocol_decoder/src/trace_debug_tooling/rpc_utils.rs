@@ -1,4 +1,4 @@
-use reqwest::IntoUrl;
+use reqwest::Url;
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::json;
 use thiserror::Error;
@@ -16,16 +16,15 @@ pub enum VerifierRpcError {
     Deserialize(#[from] serde_json::Error),
 }
 
-pub(super) struct RpcRequest<'a, U: IntoUrl> {
-    endpoint: U,
+pub(super) struct RpcRequest<'a> {
+    endpoint: Url,
     method: &'static str,
     params: &'a [String],
 }
 
-pub(super) async fn rpc_request<'a, T, U>(req: RpcRequest<'a, U>) -> VerifierRpcResult<T>
+pub(super) async fn rpc_request<T>(req: RpcRequest<'_>) -> VerifierRpcResult<T>
 where
     T: DeserializeOwned,
-    U: IntoUrl,
 {
     let client = reqwest::Client::new();
 
@@ -58,12 +57,9 @@ pub(super) struct GetBlockByNumberResponse {
 }
 
 impl GetBlockByNumberResponse {
-    pub(super) async fn fetch<U: IntoUrl>(
-        endpoint: U,
-        b_height: BlockHeight,
-    ) -> VerifierRpcResult<Self> {
+    pub(super) async fn fetch(endpoint: &Url, b_height: BlockHeight) -> VerifierRpcResult<Self> {
         let req = RpcRequest {
-            endpoint,
+            endpoint: endpoint.clone(),
             method: "eth_getBlockByNumber",
             params: &[b_height.to_string(), "false".into()],
         };
