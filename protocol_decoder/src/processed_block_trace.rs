@@ -6,6 +6,7 @@ use eth_trie_utils::nibbles::Nibbles;
 use eth_trie_utils::partial_trie::{HashedPartialTrie, PartialTrie};
 use ethereum_types::U256;
 use plonky2_evm::generation::mpt::{AccountRlp, LegacyReceiptRlp};
+use reqwest::Url;
 
 use crate::compact::compact_prestate_processing::{
     process_compact_prestate, process_compact_prestate_debug, PartialTriePreImages,
@@ -34,25 +35,36 @@ pub(crate) struct ProcessedBlockTrace {
 
 const COMPATIBLE_HEADER_VERSION: u8 = 1;
 
+#[derive(Debug)]
+pub struct DebugAndVerificationCfg {
+    verif_cfg: Option<VerificationCfg>,
+    compact_debug_traces: bool,
+}
+
+#[derive(Debug)]
+pub(crate) struct VerificationCfg {
+    pub(crate) ground_truth_endpoint: Option<Url>,
+}
+
 impl BlockTrace {
     pub fn into_txn_proof_gen_ir<F>(
         self,
         p_meta: &ProcessingMeta<F>,
         other_data: OtherBlockData,
-        debug: bool,
+        debug_cfg: DebugAndVerificationCfg,
     ) -> TraceParsingResult<Vec<TxnProofGenIR>>
     where
         F: CodeHashResolveFunc,
     {
-        if debug {
-            verify_proof_gen_ir(&self, p_meta)?;
+        if let Some(verif_cfg) = debug_cfg.verif_cfg {
+            verify_proof_gen_ir(&self, &other_data, p_meta, &verif_cfg)?;
         }
 
         // TODO: Potential small optimization. Don't clone and process the trace twice
         // if we're verifying the trace. TODO: React to 'res' and incorporate
         // into error that is output.
 
-        self.into_processed_block_trace(p_meta, debug)
+        self.into_processed_block_trace(p_meta, debug_cfg.compact_debug_traces)
             .into_txn_proof_gen_ir(other_data)
     }
 
