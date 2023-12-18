@@ -1,9 +1,11 @@
+use ethereum_types::{Address, H256, U256};
+use plonky2_evm::generation::mpt::AccountRlp;
 use reqwest::Url;
 use serde::{de::DeserializeOwned, Deserialize};
 use serde_json::json;
 use thiserror::Error;
 
-use crate::types::{BlockHeight, TrieRootHash};
+use crate::types::{BlockHeight, CodeHash, TrieRootHash};
 
 pub type VerifierRpcResult<T> = Result<T, VerifierRpcError>;
 
@@ -62,6 +64,41 @@ impl GetBlockByNumberResponse {
             endpoint: endpoint.clone(),
             method: "eth_getBlockByNumber",
             params: &[b_height.to_string(), "false".into()],
+        };
+
+        rpc_request(req).await
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct EthGetAccountResponse {
+    pub(super) balance: U256,
+    pub(super) nonce: U256,
+    pub(super) code_root: CodeHash,
+    pub(super) storage_root: TrieRootHash,
+}
+
+impl From<EthGetAccountResponse> for AccountRlp {
+    fn from(v: EthGetAccountResponse) -> Self {
+        Self {
+            nonce: v.nonce,
+            balance: v.balance,
+            storage_root: v.storage_root,
+            code_hash: v.code_root,
+        }
+    }
+}
+
+impl EthGetAccountResponse {
+    pub(super) async fn fetch(
+        endpoint: &Url,
+        address: Address,
+        b_height: BlockHeight,
+    ) -> VerifierRpcResult<Self> {
+        let req = RpcRequest {
+            endpoint: endpoint.clone(),
+            method: "eth_getAccount",
+            params: &[address.to_string(), b_height.to_string()],
         };
 
         rpc_request(req).await
