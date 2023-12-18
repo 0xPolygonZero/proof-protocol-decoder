@@ -13,7 +13,7 @@ use plonky2_evm::{generation::mpt::AccountRlp, proof::TrieRoots};
 use reqwest::Url;
 use thiserror::Error;
 
-use super::rpc_utils::GetBlockByNumberResponse;
+use super::rpc_utils::{EthGetAccountResponse, GetBlockByNumberResponse};
 use crate::{
     compact::compact_prestate_processing::PartialTriePreImages,
     decoding::TrieType,
@@ -154,6 +154,8 @@ pub(crate) fn verify_proof_gen_ir<F: CodeHashResolveFunc>(
 
 async fn rpc_verification_checks(
     ir: &[TxnProofGenIR],
+    raw_traces: &[TxnInfo],
+    b_height: BlockHeight,
     endpoint: &Url,
     err_buf: &mut Vec<TraceVerificationError>,
 ) -> anyhow::Result<()> {
@@ -165,8 +167,13 @@ async fn rpc_verification_checks(
             b_height,
             endpoint,
             err_buf,
+        );
+
+        let upstream_account_state = get_upstream_account_state_for_all_addresses_used_in_trace(
+            raw_traces, b_height, endpoint,
         )
-        .await?;
+        .await;
+        verify_all_account_entry_nodes_match_full_node();
     }
 
     Ok(())
@@ -301,11 +308,35 @@ async fn verify_all_upstream_storage_roots_match_our_storage_roots(
 }
 
 async fn get_upstream_s_root_for_address(_addr: Address, _endpoint: &Url) -> TrieRootHash {
-    todo!()
+    // TODO: Handle errors later...
 }
 
-fn verify_all_account_entry_nodes_match_full_node() {
-    todo!();
+async fn get_upstream_account_state_for_all_addresses_used_in_trace(
+    traces: &[TxnInfo],
+    b_height: BlockHeight,
+    endpoint: &Url,
+) -> Vec<AccountRlp> {
+    let get_account_futs: Vec<_> = get_all_unique_addrs_used_in_trace(traces)
+        .into_iter()
+        .map(|addr| EthGetAccountResponse::fetch(endpoint, addr, b_height))
+        .collect();
+
+    // TODO: Handle errors later...
+    join_all(get_account_futs)
+        .await
+        .into_iter()
+        .map(|res| res.unwrap().into())
+        .collect()
+}
+
+fn verify_all_account_entry_nodes_match_full_node(
+    state_trie: &HashedPartialTrie,
+    upstream_accounts_that_appear_in_trace: &[(Account, AccountRlp)],
+    err_buf: &mut Vec<TraceVerificationError>,
+) {
+    for (acc_k, data) in upstream_accounts_that_appear_in_trace {
+        state_trie.get(acc_k).unwrap()
+    }
 }
 
 async fn verify_all_final_trie_roots_match_full_node(
@@ -329,6 +360,7 @@ async fn verify_all_final_trie_roots_match_full_node(
         TrieType::Txn,
         err_buf,
     );
+
     push_trie_root_mismatch_error_if_roots_differ(
         &decoder_final_trie_roots.receipts_root,
         &resp.receipts_root,
@@ -408,4 +440,11 @@ fn create_addr_to_hashed_addr_mapping(
         hashed_addr_to_addr,
         hashed_slot_to_slot,
     }
+}
+
+fn get_all_unique_addrs_used_in_trace(trace: &[TxnInfo]) -> HashSet<Address> {
+    trace
+        .into_iter()
+        .flat_map(|txn_info| txn_info.traces.iter().map(|(addr, _)| *addr))
+        .collect()
 }
