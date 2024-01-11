@@ -6,7 +6,6 @@ use eth_trie_utils::nibbles::Nibbles;
 use eth_trie_utils::partial_trie::{HashedPartialTrie, PartialTrie};
 use ethereum_types::U256;
 use plonky2_evm::generation::mpt::{AccountRlp, LegacyReceiptRlp};
-use reqwest::Url;
 
 use crate::compact::compact_prestate_processing::{
     process_compact_prestate, process_compact_prestate_debug, PartialTriePreImages,
@@ -37,13 +36,13 @@ const COMPATIBLE_HEADER_VERSION: u8 = 1;
 
 #[derive(Debug)]
 pub struct DebugAndVerificationCfg {
-    verif_cfg: Option<VerificationCfg>,
-    compact_debug_traces: bool,
+    pub verif_cfg: Option<VerificationCfg>,
+    pub compact_debug_traces: bool,
 }
 
 #[derive(Debug)]
-pub(crate) struct VerificationCfg {
-    pub(crate) ground_truth_endpoint: Option<Url>,
+pub struct VerificationCfg {
+    pub ground_truth_endpoint: Option<String>,
 }
 
 impl BlockTrace {
