@@ -89,7 +89,7 @@ impl TxnProofGenIR {
 
 /// The current state of all tries as we process txn deltas. These are mutated
 /// after every txn we process in the trace.
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct PartialTrieState {
     pub(crate) state: HashedPartialTrie,
     pub(crate) storage: HashMap<HashedAccountAddr, HashedPartialTrie>,

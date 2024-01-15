@@ -10,7 +10,7 @@ use eth_trie_utils::{
     trie_ops::ValOrHash,
     trie_subsets::create_trie_subset,
 };
-use ethereum_types::{Address, H160, H256, U256};
+use ethereum_types::{Address, H256, U256};
 use plonky2_evm::{
     generation::{mpt::AccountRlp, GenerationInputs, TrieInputs},
     proof::TrieRoots,
@@ -18,7 +18,9 @@ use plonky2_evm::{
 use thiserror::Error;
 
 use crate::{
-    processed_block_trace::{NodesUsedByTxn, ProcessedBlockTrace, StateTrieWrites, TxnMetaState},
+    processed_block_trace::{
+        NodesUsedByTxn, ProcessedBlockTrace, ProcessedTxnInfo, StateTrieWrites, TxnMetaState,
+    },
     trace_debug_tooling::verification::TraceVerificationErrors,
     types::{
         HashedAccountAddr, HashedNodeAddr, HashedStorageAddrNibbles, OtherBlockData,
@@ -70,91 +72,59 @@ impl Display for TrieType {
 }
 
 impl ProcessedBlockTrace {
+    pub(crate) fn into_txn_proof_gen_ir_with_extra_debug_info(
+        self,
+        other_data: OtherBlockData,
+    ) -> TraceParsingResult<(Vec<TxnProofGenIR>, Vec<PartialTrieState>)> {
+        let (mut curr_block_tries, initial_tries_for_dummies, mut tot_gas_used) =
+            self.create_initial_state_for_creating_proof_gen_ir();
+
+        let gen_inputs_and_final_trie_states = self
+            .txn_info
+            .into_iter()
+            .enumerate()
+            .map(|(txn_idx, txn_info)| {
+                let res = Self::process_txn_gen_input_into_ir(
+                    txn_idx,
+                    txn_info,
+                    &other_data,
+                    &mut curr_block_tries,
+                    &mut tot_gas_used,
+                );
+                res.map(|ir| (ir, curr_block_tries.clone()))
+            })
+            .collect::<TraceParsingResult<Vec<_>>>()?;
+
+        let (mut txn_gen_inputs, tries_after_each_txn) =
+            gen_inputs_and_final_trie_states.into_iter().unzip();
+
+        Self::pad_gen_inputs_with_dummy_inputs_if_needed(
+            &mut txn_gen_inputs,
+            &other_data,
+            &initial_tries_for_dummies,
+        );
+        Ok((txn_gen_inputs, tries_after_each_txn))
+    }
+
     pub(crate) fn into_txn_proof_gen_ir(
         self,
         other_data: OtherBlockData,
     ) -> TraceParsingResult<Vec<TxnProofGenIR>> {
-        let mut curr_block_tries = PartialTrieState {
-            state: self.tries.state.clone(),
-            storage: self.tries.storage.clone(),
-            ..Default::default()
-        };
-
-        // This is just a copy of `curr_block_tries`.
-        let initial_tries_for_dummies = PartialTrieState {
-            state: self.tries.state,
-            storage: self.tries.storage,
-            ..Default::default()
-        };
-
-        println!("State trie initial contents:");
-        for (k, v) in curr_block_tries.state.items() {
-            let v_str = match v {
-                ValOrHash::Val(v) => hex::encode(&v),
-                ValOrHash::Hash(h) => format!("{:x}", h),
-            };
-
-            println!("k: {} --> {}", k, v_str);
-        }
-
-        println!("Initial state Root: {:x}", curr_block_tries.state.hash());
-
-        // let state_trie_json =
-        // serde_json::to_string_pretty(&curr_block_tries.state).unwrap();
-        // println!("Initial state trie: {}", state_trie_json);
-
-        let mut tot_gas_used = U256::zero();
+        let (mut curr_block_tries, initial_tries_for_dummies, mut tot_gas_used) =
+            self.create_initial_state_for_creating_proof_gen_ir();
 
         let mut txn_gen_inputs = self
             .txn_info
             .into_iter()
             .enumerate()
             .map(|(txn_idx, txn_info)| {
-                let tries = Self::create_minimal_partial_tries_needed_by_txn(
+                Self::process_txn_gen_input_into_ir(
+                    txn_idx,
+                    txn_info,
+                    &other_data,
                     &mut curr_block_tries,
-                    &txn_info.nodes_used_by_txn,
-                    txn_idx,
-                    &other_data.b_data.b_meta.block_beneficiary,
-                )?;
-
-                let new_tot_gas_used = tot_gas_used + txn_info.meta.gas_used;
-
-                Self::apply_deltas_to_trie_state(
-                    &mut curr_block_tries,
-                    txn_info.nodes_used_by_txn,
-                    &txn_info.meta,
-                    txn_idx,
-                )?;
-
-                let trie_roots_after = calculate_trie_input_hashes(&curr_block_tries);
-                println!(
-                    "Protocol expected trie roots after txn {}: {:?}",
-                    txn_idx, trie_roots_after
-                );
-
-                let gen_inputs = GenerationInputs {
-                    txn_number_before: txn_idx.into(),
-                    gas_used_before: tot_gas_used,
-                    gas_used_after: new_tot_gas_used,
-                    signed_txn: txn_info.meta.txn_bytes,
-                    withdrawals: Vec::new(), /* TODO: Once this is added to the trace spec, add
-                                              * it here... */
-                    tries,
-                    trie_roots_after,
-                    checkpoint_state_trie_root: other_data.checkpoint_state_trie_root,
-                    contract_code: txn_info.contract_code_accessed,
-                    block_metadata: other_data.b_data.b_meta.clone(),
-                    block_hashes: other_data.b_data.b_hashes.clone(),
-                };
-
-                let txn_proof_gen_ir = TxnProofGenIR {
-                    txn_idx,
-                    gen_inputs,
-                };
-
-                tot_gas_used = new_tot_gas_used;
-
-                Ok(txn_proof_gen_ir)
+                    &mut tot_gas_used,
+                )
             })
             .collect::<TraceParsingResult<Vec<_>>>()?;
 
@@ -173,6 +143,93 @@ impl ProcessedBlockTrace {
         Ok(txn_gen_inputs)
     }
 
+    fn create_initial_state_for_creating_proof_gen_ir(
+        &self,
+    ) -> (PartialTrieState, PartialTrieState, U256) {
+        let curr_block_tries = PartialTrieState {
+            state: self.tries.state.clone(),
+            storage: self.tries.storage.clone(),
+            ..Default::default()
+        };
+
+        // This is just a copy of `curr_block_tries`.
+        let initial_tries_for_dummies = PartialTrieState {
+            state: self.tries.state.clone(),
+            storage: self.tries.storage.clone(),
+            ..Default::default()
+        };
+
+        println!("State trie initial contents:");
+        for (k, v) in curr_block_tries.state.items() {
+            let v_str = match v {
+                ValOrHash::Val(v) => hex::encode(&v),
+                ValOrHash::Hash(h) => format!("{:x}", h),
+            };
+
+            println!("k: {} --> {}", k, v_str);
+        }
+
+        println!("Initial state Root: {:x}", curr_block_tries.state.hash());
+
+        let tot_gas_used = U256::zero();
+
+        (curr_block_tries, initial_tries_for_dummies, tot_gas_used)
+    }
+
+    fn process_txn_gen_input_into_ir(
+        txn_idx: TxnIdx,
+        txn_info: ProcessedTxnInfo,
+        other_data: &OtherBlockData,
+        curr_block_tries: &mut PartialTrieState,
+        tot_gas_used: &mut U256,
+    ) -> TraceParsingResult<TxnProofGenIR> {
+        let tries = Self::create_minimal_partial_tries_needed_by_txn(
+            curr_block_tries,
+            &txn_info.nodes_used_by_txn,
+            txn_idx,
+            &other_data.b_data.b_meta.block_beneficiary,
+        )?;
+
+        let new_tot_gas_used = *tot_gas_used + txn_info.meta.gas_used;
+
+        Self::apply_deltas_to_trie_state(
+            curr_block_tries,
+            txn_info.nodes_used_by_txn,
+            &txn_info.meta,
+            txn_idx,
+        )?;
+
+        let trie_roots_after = calculate_trie_input_hashes(curr_block_tries);
+        println!(
+            "Protocol expected trie roots after txn {}: {:?}",
+            txn_idx, trie_roots_after
+        );
+
+        let gen_inputs = GenerationInputs {
+            txn_number_before: txn_idx.into(),
+            gas_used_before: *tot_gas_used,
+            gas_used_after: new_tot_gas_used,
+            signed_txn: txn_info.meta.txn_bytes,
+            withdrawals: Vec::new(), /* TODO: Once this is added to the trace spec, add
+                                      * it here... */
+            tries,
+            trie_roots_after,
+            checkpoint_state_trie_root: other_data.checkpoint_state_trie_root,
+            contract_code: txn_info.contract_code_accessed,
+            block_metadata: other_data.b_data.b_meta.clone(),
+            block_hashes: other_data.b_data.b_hashes.clone(),
+        };
+
+        let txn_proof_gen_ir = TxnProofGenIR {
+            txn_idx,
+            gen_inputs,
+        };
+
+        *tot_gas_used = new_tot_gas_used;
+
+        Ok(txn_proof_gen_ir)
+    }
+
     fn create_minimal_partial_tries_needed_by_txn(
         curr_block_tries: &mut PartialTrieState,
         nodes_used_by_txn: &NodesUsedByTxn,
@@ -184,7 +241,7 @@ impl ProcessedBlockTrace {
             nodes_used_by_txn.state_accesses.iter().cloned(),
         )?;
 
-        let s: Vec<_> = state_trie
+        let _s: Vec<_> = state_trie
             .items()
             .map(|(_k, v)| match v {
                 ValOrHash::Val(v) => format!("V - {}", hex::encode(v)),
@@ -192,20 +249,21 @@ impl ProcessedBlockTrace {
             })
             .collect();
 
-        println!("Actual final sub state trie: {:#?}", s);
+        // println!("Actual final sub state trie: {:#?}", s);
 
-        println!(
-            "Querying the hash(H160::zero()) ({}):",
-            hash(H160::zero().as_bytes())
-        );
-        state_trie.get(
-            Nibbles::from_bytes_be(
-                &hex::decode("5380c7b7ae81a58eb98d9c78de4a1fd7fd9535fc953ed2be602daaa41767312a")
-                    .unwrap(),
-            )
-            .unwrap(),
-        );
-        println!("DONE QUERY");
+        // println!(
+        //     "Querying the hash(H160::zero()) ({}):",
+        //     hash(H160::zero().as_bytes())
+        // );
+        // state_trie.get(
+        //     Nibbles::from_bytes_be(
+        //         &hex::decode("
+        // 5380c7b7ae81a58eb98d9c78de4a1fd7fd9535fc953ed2be602daaa41767312a")
+        //             .unwrap(),
+        //     )
+        //     .unwrap(),
+        // );
+        // println!("DONE QUERY");
 
         // println!("State partial trie: {}", s);
 

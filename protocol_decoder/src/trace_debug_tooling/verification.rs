@@ -8,8 +8,9 @@ use std::{
 
 use eth_trie_utils::partial_trie::PartialTrie;
 use eth_trie_utils::{nibbles::Nibbles, partial_trie::HashedPartialTrie};
-use ethereum_types::{Address, H256};
-use futures::{executor::block_on, future::join_all};
+use ethereum_types::{Address, H256, U256};
+use futures::{future::join_all, StreamExt};
+use log::info;
 use plonky2_evm::{generation::mpt::AccountRlp, proof::TrieRoots};
 use reqwest::Url;
 use thiserror::Error;
@@ -25,11 +26,12 @@ use crate::{
         process_block_trace_trie_pre_images, ProcessedBlockTrace, ProcessedTxnInfo, ProcessingMeta,
         VerificationCfg,
     },
+    trace_debug_tooling::rpc_utils::AccountRlpWithStorageTrie,
     trace_protocol::{BlockTrace, TxnInfo},
     types::{
         BlockHeight, CodeHash, CodeHashResolveFunc, HashedAccountAddr, HashedAccountAddrNibbles,
         HashedStorageAddr, HashedStorageAddrNibbles, OtherBlockData, PartialTrieState, StorageAddr,
-        TrieRootHash, TxnIdx, TxnProofGenIR, EMPTY_CODE_HASH, EMPTY_TRIE_HASH,
+        StorageVal, TrieRootHash, TxnIdx, TxnProofGenIR, EMPTY_CODE_HASH, EMPTY_TRIE_HASH,
     },
     utils::{get_leaf_vals_from_trie, get_leaf_vals_from_trie_and_decode, hash},
 };
@@ -171,7 +173,7 @@ impl From<AccountRlp> for AccountRlpWrapper {
     }
 }
 
-pub(crate) fn verify_proof_gen_ir<F: CodeHashResolveFunc>(
+pub(crate) async fn verify_proof_gen_ir<F: CodeHashResolveFunc>(
     b_trace: &BlockTrace,
     other_data: &OtherBlockData,
     p_meta: &ProcessingMeta<F>,
@@ -201,18 +203,20 @@ pub(crate) fn verify_proof_gen_ir<F: CodeHashResolveFunc>(
         &mut err_buf,
     );
 
-    let ir = proced_b_trace
-        .into_txn_proof_gen_ir(other_data.clone())
+    let (ir, trie_state_after_each_txn) = proced_b_trace
+        .into_txn_proof_gen_ir_with_extra_debug_info(other_data.clone())
         .unwrap();
 
     if let Some(endpoint) = &verif_cfg.ground_truth_endpoint {
-        block_on(rpc_verification_checks(
+        rpc_verification_checks(
             &ir,
+            &trie_state_after_each_txn,
             &b_trace.txn_info,
             other_data.b_data.b_meta.block_number.as_u64(),
             &Url::parse(endpoint).unwrap(),
             &mut err_buf,
-        ))
+        )
+        .await
         .unwrap();
     }
 
@@ -224,17 +228,21 @@ pub(crate) fn verify_proof_gen_ir<F: CodeHashResolveFunc>(
 
 async fn rpc_verification_checks(
     ir: &[TxnProofGenIR],
+    trie_state_after_each_txn: &[PartialTrieState],
     raw_traces: &[TxnInfo],
     _b_height: BlockHeight,
     endpoint: &Url,
     err_buf: &mut Vec<TraceVerificationError>,
 ) -> anyhow::Result<()> {
     if let Some(final_txn_ir) = ir.last() {
+        println!("RPC Checks");
+
         let b_height = final_txn_ir.b_height();
 
         verify_local_state_matches_upstream_per_txn(
             &final_txn_ir.gen_inputs.trie_roots_after,
             ir,
+            trie_state_after_each_txn,
             b_height,
             endpoint,
             err_buf,
@@ -245,9 +253,6 @@ async fn rpc_verification_checks(
             raw_traces, b_height, endpoint,
         )
         .await;
-
-        // verify_all_account_entry_nodes_match_full_node(&final_txn_ir.
-        // gen_inputs.tries.state_trie);
     }
 
     Ok(())
@@ -396,14 +401,21 @@ async fn get_upstream_account_state_for_all_addresses_used_in_trace(
         .map(|addr| EthGetProofResponse::fetch(endpoint, *addr, b_height))
         .collect();
 
-    // TODO: Handle errors later...
-    // I can't think of a way to avoid all of these allocations, and I'm kind of
-    // moving fast...
-    let all_acc_state: Vec<_> = join_all(get_account_futs)
-        .await
-        .into_iter()
-        .map(|res| res.unwrap().into())
-        .collect();
+    // Do this one sequentially, since doing this in parallel makes it very easy to
+    // get rate limited hard even with decent backoff timeouts. TODO: Handle
+    // errors later... I can't think of a way to avoid all of these allocations,
+    // and I'm kind of moving fast...
+    info!("Making a ton of rpc requests (All addresses)...");
+    // let all_acc_state: Vec<_> = join_all(get_account_futs)
+    //     .await
+    //     .into_iter()
+    //     .map(|res| res.unwrap().into())
+    //     .collect();
+
+    let mut all_acc_state = Vec::new();
+    for acc_state in get_account_futs {
+        all_acc_state.push(acc_state.await.unwrap().into());
+    }
 
     all_unique_addrs
         .into_iter()
@@ -411,34 +423,20 @@ async fn get_upstream_account_state_for_all_addresses_used_in_trace(
         .collect()
 }
 
-// fn verify_all_account_entry_nodes_match_full_node(
-//     state_trie: &HashedPartialTrie,
-//     upstream_accounts_that_appear_in_trace: &[(Address, AccountRlpWrapper)],
-//     err_buf: &mut Vec<TraceVerificationError>,
-// ) {
-//     for (acc_k, upstream_data) in upstream_accounts_that_appear_in_trace {
-//         let local_data =
-// AccountRlpWrapper::from(get_account_from_trie(state_trie, acc_k));
-
-//         if &local_data != upstream_data {
-//             err_buf.push(TraceVerificationError::AccountStateMismatch(*acc_k,
-// local_data.clone(), upstream_data.clone()));         }
-
-//         // TODO: Launch storage addr check here if the storage root does not
-// match...     }
-// }
-
 async fn verify_local_state_matches_upstream_per_txn(
     decoder_final_trie_roots: &TrieRoots,
     ir: &[TxnProofGenIR],
+    trie_state_after_each_txn: &[PartialTrieState],
     b_height: BlockHeight,
     endpoint: &Url,
     err_buf: &mut Vec<TraceVerificationError>,
 ) -> anyhow::Result<()> {
+    println!("Verifying upstream state...");
+
     let resp = GetBlockByNumberResponse::fetch(endpoint, b_height).await?;
 
     let some_roots_differ = decoder_final_trie_roots.state_root != resp.state_root
-        || decoder_final_trie_roots.transactions_root != resp.txn_root
+        || decoder_final_trie_roots.transactions_root != resp.txns_root
         || decoder_final_trie_roots.receipts_root != resp.receipts_root;
 
     if some_roots_differ {
@@ -451,7 +449,7 @@ async fn verify_local_state_matches_upstream_per_txn(
 
         push_trie_root_mismatch_error_if_roots_differ(
             &decoder_final_trie_roots.transactions_root,
-            &resp.txn_root,
+            &resp.txns_root,
             TrieType::Txn,
             err_buf,
         );
@@ -466,6 +464,7 @@ async fn verify_local_state_matches_upstream_per_txn(
         find_and_report_first_upstream_txn_state_that_differs_from_ours(
             &resp.txn_hashes,
             ir,
+            trie_state_after_each_txn,
             endpoint,
             err_buf,
         )
@@ -494,9 +493,11 @@ fn push_trie_root_mismatch_error_if_roots_differ(
 async fn find_and_report_first_upstream_txn_state_that_differs_from_ours(
     txn_hashes: &[H256],
     ir: &[TxnProofGenIR],
+    trie_state_after_each_txn: &[PartialTrieState],
     endpoint: &Url,
     err_buf: &mut Vec<TraceVerificationError>,
 ) {
+    info!("Making a ton of rpc requests (Txn replays)...");
     let txn_diffs: Vec<_> = join_all(
         txn_hashes
             .iter()
@@ -509,18 +510,64 @@ async fn find_and_report_first_upstream_txn_state_that_differs_from_ours(
     // Because the IR only contains the trie at the start of the txn and the diff
     // contains the final value at the end of the txn, we need to compare the diffs
     // to the previous IR value.
-    for (txn_diff, txn_ir) in txn_diffs
+    for ((txn_diff, txn_ir), final_trie_state_after_txn) in txn_diffs
         .into_iter()
-        .map(|res| res.map(|resp| resp.result.state_diff).unwrap())
+        .map(|res| res.map(|resp| resp.state_diff).unwrap())
         .zip(ir.iter().skip(1))
+        .zip(trie_state_after_each_txn.iter())
     {
         for (diff_addr, new_upstream_val) in txn_diff.iter() {
-            let acc_data = get_account_from_trie(&txn_ir.gen_inputs.tries.state_trie, diff_addr);
+            println!("Querying diff addr {:x}!!", diff_addr);
+            let local_acc_data_raw =
+                get_account_from_trie(&final_trie_state_after_txn.state, diff_addr);
 
-            let diff = new_upstream_val.create_diff_from_actual_data(&acc_data);
-            if !diff.values_have_changed() {
+            // // Lol efficiency...
+            // let acc_s_tries = txn_ir
+            //     .gen_inputs
+            //     .tries
+            //     .storage_tries
+            //     .iter()
+            //     .cloned()
+            //     .collect::<HashMap<_, _>>();
+
+            let h_addr = hash(diff_addr.as_bytes());
+            let s_trie = &final_trie_state_after_txn.storage[&h_addr];
+
+            let storage_trie_delta = new_upstream_val
+                .get_storage_addrs_changed()
+                .map(|slots| {
+                    {
+                        println!(
+                            "Local slots: {:#?}",
+                            get_leaf_vals_from_trie_and_decode::<U256>(s_trie).collect::<Vec<_>>()
+                        );
+
+                        slots.iter().map(|upstream_slot| {
+                            // Storage values of `0` do not have nodes in the storage trie.
+                            (
+                                *upstream_slot,
+                                (s_trie
+                                    .get(Nibbles::from_h256_be(*upstream_slot))
+                                    .map(|v_bytes| rlp::decode(v_bytes).unwrap()))
+                                .unwrap_or(StorageVal::zero()),
+                            )
+                        })
+                    }
+                    .collect()
+                })
+                .unwrap_or_else(HashMap::new);
+
+            let local_acc_data_with_s_trie = AccountRlpWithStorageTrie {
+                balance: local_acc_data_raw.balance,
+                nonce: local_acc_data_raw.nonce,
+                code_hash: local_acc_data_raw.code_hash,
+                storage_trie_delta,
+            };
+
+            let diff = new_upstream_val.create_diff_from_actual_data(&local_acc_data_with_s_trie);
+            if diff.values_have_changed() {
                 err_buf.push(TraceVerificationError::AccountStateMismatch(
-                    txn_ir.txn_idx,
+                    txn_ir.txn_idx - 1,
                     *diff_addr,
                     diff,
                 ));

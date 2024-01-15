@@ -50,15 +50,44 @@ impl BlockTrace {
         self,
         p_meta: &ProcessingMeta<F>,
         other_data: OtherBlockData,
-        debug_cfg: DebugAndVerificationCfg,
+        debug_cfg: &DebugAndVerificationCfg,
     ) -> TraceParsingResult<Vec<TxnProofGenIR>>
     where
         F: CodeHashResolveFunc,
     {
-        if let Some(verif_cfg) = debug_cfg.verif_cfg {
-            verify_proof_gen_ir(&self, &other_data, p_meta, &verif_cfg)?;
+        self.into_txn_proof_gen_ir_with_verif_common(p_meta, other_data, debug_cfg)
+    }
+
+    pub async fn into_txn_proof_gen_ir_with_verif<F>(
+        self,
+        p_meta: &ProcessingMeta<F>,
+        other_data: OtherBlockData,
+        debug_cfg: &DebugAndVerificationCfg,
+    ) -> TraceParsingResult<Vec<TxnProofGenIR>>
+    where
+        F: CodeHashResolveFunc,
+    {
+        if let Some(verif_cfg) = &debug_cfg.verif_cfg {
+            println!("VERIFYING!!");
+
+            let other_data = other_data.clone();
+            let b_trace = self.clone();
+
+            verify_proof_gen_ir(&b_trace, &other_data, p_meta, verif_cfg).await?;
         }
 
+        self.into_txn_proof_gen_ir_with_verif_common(p_meta, other_data, debug_cfg)
+    }
+
+    fn into_txn_proof_gen_ir_with_verif_common<F>(
+        self,
+        p_meta: &ProcessingMeta<F>,
+        other_data: OtherBlockData,
+        debug_cfg: &DebugAndVerificationCfg,
+    ) -> TraceParsingResult<Vec<TxnProofGenIR>>
+    where
+        F: CodeHashResolveFunc,
+    {
         // TODO: Potential small optimization. Don't clone and process the trace twice
         // if we're verifying the trace. TODO: React to 'res' and incorporate
         // into error that is output.
