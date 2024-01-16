@@ -463,7 +463,12 @@ async fn verify_local_state_matches_upstream_per_txn(
 
     if some_roots_differ {
         verify_that_initial_tries_are_correct(&ir[0], b_height, endpoint, err_buf).await?;
-        verify_trie_roots_match_local(&decoder_final_trie_roots, &upstream_roots, TrieInitialOrFinal::Final, err_buf);
+        verify_trie_roots_match_local(
+            decoder_final_trie_roots,
+            &upstream_roots,
+            TrieInitialOrFinal::Final,
+            err_buf,
+        );
 
         find_and_report_upstream_txn_states_that_differ_from_ours(
             &resp.txn_hashes,
@@ -478,7 +483,12 @@ async fn verify_local_state_matches_upstream_per_txn(
     Ok(())
 }
 
-fn verify_trie_roots_match_local(local_roots: &TrieRoots, upstream_roots: &TrieRoots, trie_init_or_fin: TrieInitialOrFinal, err_buf: &mut Vec<TraceVerificationError>) {
+fn verify_trie_roots_match_local(
+    local_roots: &TrieRoots,
+    upstream_roots: &TrieRoots,
+    trie_init_or_fin: TrieInitialOrFinal,
+    err_buf: &mut Vec<TraceVerificationError>,
+) {
     push_trie_root_mismatch_error_if_roots_differ(
         &local_roots.state_root,
         &upstream_roots.state_root,
@@ -521,7 +531,12 @@ fn push_trie_root_mismatch_error_if_roots_differ(
     }
 }
 
-async fn verify_that_initial_tries_are_correct(initial_ir: &TxnProofGenIR, b_height: BlockHeight, endpoint: &Url, err_buf: &mut Vec<TraceVerificationError>) -> anyhow::Result<()> {
+async fn verify_that_initial_tries_are_correct(
+    initial_ir: &TxnProofGenIR,
+    b_height: BlockHeight,
+    endpoint: &Url,
+    err_buf: &mut Vec<TraceVerificationError>,
+) -> anyhow::Result<()> {
     if b_height == 0 {
         return Ok(());
     }
@@ -539,7 +554,12 @@ async fn verify_that_initial_tries_are_correct(initial_ir: &TxnProofGenIR, b_hei
         receipts_root: upstream_resp.receipts_root,
     };
 
-    verify_trie_roots_match_local(&local_initial_roots, &upstream_roots, TrieInitialOrFinal::Initial, err_buf);
+    verify_trie_roots_match_local(
+        &local_initial_roots,
+        &upstream_roots,
+        TrieInitialOrFinal::Initial,
+        err_buf,
+    );
 
     Ok(())
 }
@@ -568,7 +588,8 @@ async fn find_and_report_upstream_txn_states_that_differ_from_ours(
     for (txn_idx, (txn_diff, final_trie_state_after_txn)) in txn_diffs
         .into_iter()
         .map(|res| res.map(|resp| resp.state_diff).unwrap())
-        .zip(trie_state_after_each_txn.iter()).enumerate()
+        .zip(trie_state_after_each_txn.iter())
+        .enumerate()
     {
         for (diff_addr, new_upstream_val) in txn_diff.iter() {
             println!("Querying diff addr {:x}!!", diff_addr);
@@ -623,9 +644,7 @@ async fn find_and_report_upstream_txn_states_that_differ_from_ours(
             let diff = new_upstream_val.create_diff_from_actual_data(&local_acc_data_with_s_trie);
             if diff.values_have_changed() {
                 err_buf.push(TraceVerificationError::AccountStateMismatch(
-                    txn_idx,
-                    *diff_addr,
-                    diff,
+                    txn_idx, *diff_addr, diff,
                 ));
             }
         }

@@ -1252,14 +1252,14 @@ pub(crate) struct ProcessedCompactOutput {
     pub(crate) witness_out: WitnessOutput,
 }
 
-pub(crate) fn process_compact_prestate(
+pub fn process_compact_prestate(
     state: TrieCompact,
 ) -> CompactParsingResult<ProcessedCompactOutput> {
     process_compact_prestate_common(state, ParserState::create_and_extract_header)
 }
 
 // TODO: Move behind a feature flag...
-pub(crate) fn process_compact_prestate_debug(
+pub fn process_compact_prestate_debug(
     state: TrieCompact,
 ) -> CompactParsingResult<ProcessedCompactOutput> {
     process_compact_prestate_common(state, ParserState::create_and_extract_header_debug)
