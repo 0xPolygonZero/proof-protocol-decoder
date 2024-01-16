@@ -249,24 +249,6 @@ impl ProcessedBlockTrace {
             })
             .collect();
 
-        // println!("Actual final sub state trie: {:#?}", s);
-
-        // println!(
-        //     "Querying the hash(H160::zero()) ({}):",
-        //     hash(H160::zero().as_bytes())
-        // );
-        // state_trie.get(
-        //     Nibbles::from_bytes_be(
-        //         &hex::decode("
-        // 5380c7b7ae81a58eb98d9c78de4a1fd7fd9535fc953ed2be602daaa41767312a")
-        //             .unwrap(),
-        //     )
-        //     .unwrap(),
-        // );
-        // println!("DONE QUERY");
-
-        // println!("State partial trie: {}", s);
-
         let txn_k = Nibbles::from_bytes_be(&rlp::encode(&txn_idx)).unwrap();
         // TODO: Replace cast once `eth_trie_utils` supports `into` for `usize...
         let transactions_trie =

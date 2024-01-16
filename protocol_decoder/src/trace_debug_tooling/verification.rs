@@ -87,6 +87,21 @@ where
     }
 }
 
+#[derive(Copy, Clone, Debug)]
+enum TrieInitialOrFinal {
+    Initial,
+    Final,
+}
+
+impl Display for TrieInitialOrFinal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TrieInitialOrFinal::Initial => write!(f, "initial"),
+            TrieInitialOrFinal::Final => write!(f, "final"),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Error)]
 pub enum TraceVerificationError {
     #[error("No storage trie supplied for storage root {2:x} which is referenced by account {0} (hashed: {1:x})")]
@@ -103,8 +118,8 @@ pub enum TraceVerificationError {
         CodeHash,
     ),
 
-    #[error("The decoder calculated a different trie root that the upstream block trace provider (eg. full-node) arrived at (type: {0}, decoder: {1:x}, upstream: {2:x})")]
-    DecoderFinalTrieRootMismatch(TrieType, TrieRootHash, TrieRootHash),
+    #[error("The decoder calculated a different {1} trie root that the upstream block trace provider (eg. full-node) arrived at (type: {0}, decoder: {2:x}, upstream: {3:x})")]
+    DecoderTrieRootMismatch(TrieType, TrieInitialOrFinal, TrieRootHash, TrieRootHash),
 
     #[error("Pre-image had state nodes that are not referenced by the trace: {0:#?}")]
     UnusedStateNodesInPreImage(Vec<HashedKeyAndUnhashedLookup<Address>>),
@@ -366,8 +381,9 @@ async fn verify_all_upstream_storage_roots_match_our_storage_roots(
 
     for (our_s_root, upstream_s_root) in our_s_roots.into_iter().zip(upstream_s_roots) {
         if our_s_root != upstream_s_root {
-            err_buf.push(TraceVerificationError::DecoderFinalTrieRootMismatch(
+            err_buf.push(TraceVerificationError::DecoderTrieRootMismatch(
                 TrieType::Storage,
+                TrieInitialOrFinal::Final,
                 our_s_root,
                 upstream_s_root,
             ));
@@ -439,29 +455,17 @@ async fn verify_local_state_matches_upstream_per_txn(
         || decoder_final_trie_roots.transactions_root != resp.txns_root
         || decoder_final_trie_roots.receipts_root != resp.receipts_root;
 
+    let upstream_roots = TrieRoots {
+        state_root: resp.state_root,
+        transactions_root: resp.txns_root,
+        receipts_root: resp.receipts_root,
+    };
+
     if some_roots_differ {
-        push_trie_root_mismatch_error_if_roots_differ(
-            &decoder_final_trie_roots.state_root,
-            &resp.state_root,
-            TrieType::State,
-            err_buf,
-        );
+        verify_that_initial_tries_are_correct(&ir[0], b_height, endpoint, err_buf).await?;
+        verify_trie_roots_match_local(&decoder_final_trie_roots, &upstream_roots, TrieInitialOrFinal::Final, err_buf);
 
-        push_trie_root_mismatch_error_if_roots_differ(
-            &decoder_final_trie_roots.transactions_root,
-            &resp.txns_root,
-            TrieType::Txn,
-            err_buf,
-        );
-
-        push_trie_root_mismatch_error_if_roots_differ(
-            &decoder_final_trie_roots.receipts_root,
-            &resp.receipts_root,
-            TrieType::Receipt,
-            err_buf,
-        );
-
-        find_and_report_first_upstream_txn_state_that_differs_from_ours(
+        find_and_report_upstream_txn_states_that_differ_from_ours(
             &resp.txn_hashes,
             ir,
             trie_state_after_each_txn,
@@ -474,23 +478,74 @@ async fn verify_local_state_matches_upstream_per_txn(
     Ok(())
 }
 
+fn verify_trie_roots_match_local(local_roots: &TrieRoots, upstream_roots: &TrieRoots, trie_init_or_fin: TrieInitialOrFinal, err_buf: &mut Vec<TraceVerificationError>) {
+    push_trie_root_mismatch_error_if_roots_differ(
+        &local_roots.state_root,
+        &upstream_roots.state_root,
+        trie_init_or_fin,
+        TrieType::State,
+        err_buf,
+    );
+
+    push_trie_root_mismatch_error_if_roots_differ(
+        &local_roots.transactions_root,
+        &upstream_roots.transactions_root,
+        trie_init_or_fin,
+        TrieType::Txn,
+        err_buf,
+    );
+
+    push_trie_root_mismatch_error_if_roots_differ(
+        &local_roots.receipts_root,
+        &upstream_roots.receipts_root,
+        trie_init_or_fin,
+        TrieType::Receipt,
+        err_buf,
+    );
+}
+
 fn push_trie_root_mismatch_error_if_roots_differ(
     our_root: &TrieRootHash,
     upstream_root: &TrieRootHash,
+    trie_init_or_fin: TrieInitialOrFinal,
     trie_type: TrieType,
     err_buf: &mut Vec<TraceVerificationError>,
 ) {
     if our_root != upstream_root {
-        err_buf.push(TraceVerificationError::DecoderFinalTrieRootMismatch(
+        err_buf.push(TraceVerificationError::DecoderTrieRootMismatch(
             trie_type,
+            trie_init_or_fin,
             *our_root,
             *upstream_root,
         ));
     }
 }
 
+async fn verify_that_initial_tries_are_correct(initial_ir: &TxnProofGenIR, b_height: BlockHeight, endpoint: &Url, err_buf: &mut Vec<TraceVerificationError>) -> anyhow::Result<()> {
+    if b_height == 0 {
+        return Ok(());
+    }
+
+    let local_initial_roots = TrieRoots {
+        state_root: initial_ir.gen_inputs.tries.state_trie.hash(),
+        transactions_root: initial_ir.gen_inputs.tries.transactions_trie.hash(),
+        receipts_root: initial_ir.gen_inputs.tries.receipts_trie.hash(),
+    };
+
+    let upstream_resp = GetBlockByNumberResponse::fetch(endpoint, b_height - 1).await?;
+    let upstream_roots = TrieRoots {
+        state_root: upstream_resp.state_root,
+        transactions_root: upstream_resp.txns_root,
+        receipts_root: upstream_resp.receipts_root,
+    };
+
+    verify_trie_roots_match_local(&local_initial_roots, &upstream_roots, TrieInitialOrFinal::Initial, err_buf);
+
+    Ok(())
+}
+
 // Stops after first mismatch.
-async fn find_and_report_first_upstream_txn_state_that_differs_from_ours(
+async fn find_and_report_upstream_txn_states_that_differ_from_ours(
     txn_hashes: &[H256],
     ir: &[TxnProofGenIR],
     trie_state_after_each_txn: &[PartialTrieState],
@@ -510,11 +565,10 @@ async fn find_and_report_first_upstream_txn_state_that_differs_from_ours(
     // Because the IR only contains the trie at the start of the txn and the diff
     // contains the final value at the end of the txn, we need to compare the diffs
     // to the previous IR value.
-    for ((txn_diff, txn_ir), final_trie_state_after_txn) in txn_diffs
+    for (txn_idx, (txn_diff, final_trie_state_after_txn)) in txn_diffs
         .into_iter()
         .map(|res| res.map(|resp| resp.state_diff).unwrap())
-        .zip(ir.iter().skip(1))
-        .zip(trie_state_after_each_txn.iter())
+        .zip(trie_state_after_each_txn.iter()).enumerate()
     {
         for (diff_addr, new_upstream_val) in txn_diff.iter() {
             println!("Querying diff addr {:x}!!", diff_addr);
@@ -543,11 +597,13 @@ async fn find_and_report_first_upstream_txn_state_that_differs_from_ours(
                         );
 
                         slots.iter().map(|upstream_slot| {
+                            let hashed_upstream_slot = hash(upstream_slot.as_bytes());
+
                             // Storage values of `0` do not have nodes in the storage trie.
                             (
                                 *upstream_slot,
                                 (s_trie
-                                    .get(Nibbles::from_h256_be(*upstream_slot))
+                                    .get(Nibbles::from_h256_be(hashed_upstream_slot))
                                     .map(|v_bytes| rlp::decode(v_bytes).unwrap()))
                                 .unwrap_or(StorageVal::zero()),
                             )
@@ -567,7 +623,7 @@ async fn find_and_report_first_upstream_txn_state_that_differs_from_ours(
             let diff = new_upstream_val.create_diff_from_actual_data(&local_acc_data_with_s_trie);
             if diff.values_have_changed() {
                 err_buf.push(TraceVerificationError::AccountStateMismatch(
-                    txn_ir.txn_idx - 1,
+                    txn_idx,
                     *diff_addr,
                     diff,
                 ));

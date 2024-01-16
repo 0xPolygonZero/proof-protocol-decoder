@@ -7,7 +7,7 @@ use std::{
 };
 
 use ethereum_types::{Address, H256, U256};
-use plonky2_evm::generation::mpt::AccountRlp;
+use plonky2_evm::{generation::mpt::AccountRlp, proof::TrieRoots};
 use rand::Rng;
 use reqwest::{RequestBuilder, Url};
 use serde::{
@@ -126,6 +126,14 @@ impl GetBlockByNumberResponse {
             .unwrap_or_else(|err| panic!("{}", err));
 
         Ok(res)
+    }
+
+    fn get_trie_roots(&self) -> TrieRoots {
+        TrieRoots {
+            state_root: self.result.state_root,
+            transactions_root: self.result.txns_root,
+            receipts_root: self.result.receipts_root,
+        }
     }
 }
 
