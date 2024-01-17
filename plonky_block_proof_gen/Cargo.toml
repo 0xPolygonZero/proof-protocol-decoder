@@ -10,7 +10,7 @@ license = "MIT OR Apache-2.0"
 ethereum-types = { workspace = true }
 log = { workspace = true }
 paste = "1.0.14"
-plonky2 = { git = "https://github.com/0xPolygonZero/plonky2.git", rev = "a0f42f8d82c11de915e1c1e3285fc1b6a06968c4" }
+plonky2 = { git = "https://github.com/0xPolygonZero/plonky2.git", rev = "f44d023d07d2754c216d2cae08f5c67ac4f50e9d" }
 plonky2_evm = { workspace = true }
 protocol_decoder = { path = "../protocol_decoder" }
 serde = { workspace = true }
