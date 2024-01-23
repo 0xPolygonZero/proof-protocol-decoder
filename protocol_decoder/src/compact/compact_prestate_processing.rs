@@ -271,7 +271,7 @@ impl AccountNodeData {
 }
 
 #[derive(Debug)]
-pub(crate) struct Header {
+pub struct Header {
     version: u8,
 }
 
@@ -288,9 +288,9 @@ impl Header {
 }
 
 #[derive(Debug)]
-pub(crate) struct WitnessOutput {
-    pub(crate) tries: PartialTriePreImages,
-    pub(crate) code: Option<HashMap<CodeHash, Vec<u8>>>,
+pub struct WitnessOutput {
+    pub tries: PartialTriePreImages,
+    pub code: Option<HashMap<CodeHash, Vec<u8>>>,
 }
 
 #[derive(Debug)]
@@ -1241,15 +1241,15 @@ enum TraverserDirection {
 }
 
 #[derive(Clone, Debug, Default)]
-pub(crate) struct PartialTriePreImages {
-    pub(crate) state: HashedPartialTrie,
-    pub(crate) storage: HashMap<HashedAccountAddr, HashedPartialTrie>,
+pub struct PartialTriePreImages {
+    pub state: HashedPartialTrie,
+    pub storage: HashMap<HashedAccountAddr, HashedPartialTrie>,
 }
 
 #[derive(Debug)]
-pub(crate) struct ProcessedCompactOutput {
-    pub(crate) header: Header,
-    pub(crate) witness_out: WitnessOutput,
+pub struct ProcessedCompactOutput {
+    pub header: Header,
+    pub witness_out: WitnessOutput,
 }
 
 pub fn process_compact_prestate(

@@ -103,6 +103,7 @@ impl ProcessedBlockTrace {
             &other_data,
             &initial_tries_for_dummies,
         );
+
         Ok((txn_gen_inputs, tries_after_each_txn))
     }
 

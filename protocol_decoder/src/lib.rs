@@ -2,7 +2,7 @@
 #![feature(trait_alias)]
 #![feature(iter_array_chunks)]
 
-mod compact;
+pub mod compact;
 pub mod decoding;
 mod deserializers;
 pub mod processed_block_trace;
