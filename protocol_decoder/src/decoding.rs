@@ -562,11 +562,13 @@ fn create_minimal_storage_partial_tries<'a>(
                 }
             };
 
-            let partial_storage_trie = create_trie_subset_wrapped(
-                base_storage_trie,
-                mem_accesses.iter().cloned(),
-                TrieType::Storage,
-            )?;
+            // let partial_storage_trie = create_trie_subset_wrapped(
+            //     base_storage_trie,
+            //     mem_accesses.iter().cloned(),
+            //     TrieType::Storage,
+            // )?;
+
+            let partial_storage_trie = base_storage_trie.clone();
 
             Ok((*h_addr, partial_storage_trie))
         })
