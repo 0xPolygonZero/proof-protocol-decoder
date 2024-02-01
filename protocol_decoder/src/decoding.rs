@@ -103,6 +103,8 @@ impl ProcessedBlockTrace {
             gas_used_after: U256::zero(),
         };
 
+        let num_txns = self.txn_info.len();
+
         let mut txn_gen_inputs = self
             .txn_info
             .into_iter()
@@ -171,7 +173,7 @@ impl ProcessedBlockTrace {
             )?;
         }
 
-        Ok(txn_gen_inputs)
+        Ok(txn_gen_inputs[(txn_gen_inputs.len() - 3)..txn_gen_inputs.len()].to_vec())
     }
 
     fn create_minimal_partial_tries_needed_by_txn(
