@@ -1,9 +1,6 @@
 #![feature(linked_list_cursors)]
 #![feature(trait_alias)]
 #![feature(iter_array_chunks)]
-// TODO: address these lints
-#![allow(unused)]
-#![allow(private_interfaces)]
 
 mod compact;
 pub mod decoding;

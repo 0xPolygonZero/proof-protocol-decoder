@@ -20,8 +20,7 @@ use crate::{
     processed_block_trace::{NodesUsedByTxn, ProcessedBlockTrace, StateTrieWrites, TxnMetaState},
     types::{
         HashedAccountAddr, HashedNodeAddr, HashedStorageAddrNibbles, OtherBlockData, TrieRootHash,
-        TxnIdx, TxnProofGenIR, EMPTY_ACCOUNT_BYTES_RLPED, EMPTY_TRIE_HASH,
-        ZERO_STORAGE_SLOT_VAL_RLPED,
+        TxnIdx, TxnProofGenIR, EMPTY_ACCOUNT_BYTES_RLPED, ZERO_STORAGE_SLOT_VAL_RLPED,
     },
     utils::{hash, update_val_if_some},
 };
@@ -365,10 +364,6 @@ impl ProcessedBlockTrace {
             // If we have no actual dummy proofs, then we create one and append it to the
             // end of the block.
             false => {
-                // Guaranteed to have a real txn.
-                let txn_idx_of_dummy_entry =
-                    txn_ir.last().unwrap().txn_number_before.low_u64() as usize + 1;
-
                 // Dummy state will be the state after the final txn.
                 let mut withdrawal_dummy =
                     create_dummy_gen_input(other_data, extra_data, final_trie_state);

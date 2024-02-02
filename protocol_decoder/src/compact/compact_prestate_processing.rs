@@ -1198,15 +1198,6 @@ impl<'a> CollapsableWitnessEntryTraverser<'a> {
     }
 
     // Inclusive.
-    fn replace_next_n_entries_with_single_entry(&mut self, n: usize, entry: WitnessEntry) {
-        for _ in 0..n {
-            self.entry_cursor.remove_current();
-        }
-
-        self.entry_cursor.insert_after(entry)
-    }
-
-    // Inclusive.
     fn replace_prev_n_entries_with_single_entry(&mut self, n: usize, entry: WitnessEntry) {
         for _ in 0..n {
             self.entry_cursor.remove_current();
@@ -1233,10 +1224,17 @@ fn try_get_node_entry_from_witness_entry(entry: &WitnessEntry) -> Option<&NodeEn
     }
 }
 
+// TODO: I suspect that we will still need `Forwards` & `Backwards` with some
+// upcoming debug tooling PRs, so I'll leave removing these for now until that's
+// done.
 #[derive(Debug)]
 enum TraverserDirection {
+    #[allow(dead_code)]
     Forwards,
+
     Backwards,
+
+    #[allow(dead_code)]
     Both,
 }
 
@@ -1425,7 +1423,7 @@ fn get_bytes_from_cursor<C: CompactCursor>(cursor: &mut C, cursor_start_pos: u64
 
 #[cfg(test)]
 mod tests {
-    use eth_trie_utils::{nibbles::Nibbles, partial_trie::PartialTrie};
+    use eth_trie_utils::nibbles::Nibbles;
 
     use super::{key_bytes_to_nibbles, parse_just_to_instructions, Instruction};
     use crate::compact::{
@@ -1499,36 +1497,36 @@ mod tests {
     #[test]
     fn complex_payload_1() {
         init();
-        TEST_PAYLOAD_1.parse_and_check_hash_matches_with_debug();
+        TEST_PAYLOAD_1.parse_and_check_hash_matches();
     }
 
     #[test]
     fn complex_payload_2() {
         init();
-        TEST_PAYLOAD_2.parse_and_check_hash_matches_with_debug();
+        TEST_PAYLOAD_2.parse_and_check_hash_matches();
     }
 
     #[test]
     fn complex_payload_3() {
         init();
-        TEST_PAYLOAD_3.parse_and_check_hash_matches_with_debug();
+        TEST_PAYLOAD_3.parse_and_check_hash_matches();
     }
 
     #[test]
     fn complex_payload_4() {
         init();
-        TEST_PAYLOAD_4.parse_and_check_hash_matches_with_debug();
+        TEST_PAYLOAD_4.parse_and_check_hash_matches();
     }
 
     #[test]
     fn complex_payload_5() {
         init();
-        TEST_PAYLOAD_5.parse_and_check_hash_matches_with_debug();
+        TEST_PAYLOAD_5.parse_and_check_hash_matches();
     }
 
     #[test]
     fn complex_payload_6() {
         init();
-        TEST_PAYLOAD_6.parse_and_check_hash_matches_with_debug();
+        TEST_PAYLOAD_6.parse_and_check_hash_matches();
     }
 }
