@@ -5,6 +5,10 @@ use std::{
 };
 
 use eth_trie_utils::{
+    debug_tools::{
+        common::PathSegment,
+        query::{get_path_from_query, DebugQueryParamsBuilder},
+    },
     nibbles::Nibbles,
     partial_trie::{HashedPartialTrie, Node, PartialTrie},
     trie_subsets::create_trie_subset,
@@ -74,6 +78,12 @@ struct PartialTrieState {
     storage: HashMap<HashedAccountAddr, HashedPartialTrie>,
     txn: HashedPartialTrie,
     receipt: HashedPartialTrie,
+}
+
+#[derive(Debug, Default)]
+struct TrieDeltaApplicationOutput {
+    additional_state_trie_paths_to_not_hash: Vec<Nibbles>,
+    additional_storage_trie_paths_to_not_hash: HashMap<H256, Vec<Nibbles>>,
 }
 
 impl ProcessedBlockTrace {
@@ -220,7 +230,9 @@ impl ProcessedBlockTrace {
         deltas: NodesUsedByTxn,
         meta: &TxnMetaState,
         txn_idx: TxnIdx,
-    ) -> TraceParsingResult<()> {
+    ) -> TraceParsingResult<TrieDeltaApplicationOutput> {
+        let mut out = TrieDeltaApplicationOutput::default();
+
         for (hashed_acc_addr, storage_writes) in deltas.storage_writes {
             let storage_trie = trie_state
                 .storage
@@ -237,7 +249,16 @@ impl ProcessedBlockTrace {
                 match val == ZERO_STORAGE_SLOT_VAL_RLPED {
                     false => storage_trie.insert(slot, val),
                     true => {
+                        let old_path = Self::get_trie_trace(storage_trie, &slot);
                         storage_trie.delete(slot);
+                        let new_path = Self::get_trie_trace(storage_trie, &slot);
+
+                        if Self::node_deletion_resulted_in_a_branch_collapse(&old_path, &new_path) {
+                            out.additional_storage_trie_paths_to_not_hash
+                                .entry(H256::from_slice(&hashed_acc_addr.bytes_be()))
+                                .or_default()
+                                .push(slot);
+                        }
                     }
                 };
             }
@@ -277,7 +298,13 @@ impl ProcessedBlockTrace {
             // TODO: Once the mechanism for resolving code hashes settles, we probably want
             // to also delete the code hash mapping here as well...
 
+            let old_path = Self::get_trie_trace(&trie_state.state, &k);
             trie_state.state.delete(k);
+            let new_path = Self::get_trie_trace(&trie_state.state, &k);
+
+            if Self::node_deletion_resulted_in_a_branch_collapse(&old_path, &new_path) {
+                out.additional_state_trie_paths_to_not_hash.push(k);
+            }
         }
 
         let txn_k = Nibbles::from_bytes_be(&rlp::encode(&txn_idx)).unwrap();
@@ -287,7 +314,48 @@ impl ProcessedBlockTrace {
             .receipt
             .insert(txn_k, meta.receipt_node_bytes.as_ref());
 
-        Ok(())
+        Ok(out)
+    }
+
+    fn get_trie_trace(trie: &HashedPartialTrie, k: &Nibbles) -> Vec<PathSegment> {
+        let q = DebugQueryParamsBuilder::default()
+            .print_key_pieces(false)
+            .print_node_specific_values(false)
+            .build(*k);
+        get_path_from_query(trie, q).node_path.0
+    }
+
+    fn node_deletion_resulted_in_a_branch_collapse(
+        old_path: &[PathSegment],
+        new_path: &[PathSegment],
+    ) -> bool {
+        // Collapse requires at least 2 nodes.
+        if old_path.len() < 2 {
+            return false;
+        }
+
+        // Node we need to check is the second last.
+        let seg_idx = old_path.len() - 1;
+
+        // The second last node needs to be a branch in order for a collapse to occur.
+        if matches!(&old_path[seg_idx], PathSegment::Branch(_)) {
+            return false;
+        }
+
+        let new_seg_at_idx = &new_path[seg_idx];
+
+        // TODO: Remove assert below and change seg type to `Extension` after were sure
+        // this works... Check if the branch resulted in an extension after the
+        // deletion.
+        if matches!(new_seg_at_idx, PathSegment::Branch(_)) {
+            return false;
+        }
+
+        // Additional sanity check as this should be the only valid node after a
+        // collapse.
+        assert!(matches!(new_seg_at_idx, PathSegment::Extension(_)));
+
+        true
     }
 
     /// Pads a generated IR vec with additional "dummy" entries if needed.
